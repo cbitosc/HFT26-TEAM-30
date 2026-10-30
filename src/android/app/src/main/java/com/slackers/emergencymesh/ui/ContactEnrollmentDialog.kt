@@ -88,7 +88,7 @@ internal fun ContactEnrollmentDialog(
                 imported?.let { card ->
                     Text("Name: ${card.displayName}")
                     Text("Device ID: ${card.deviceId}", style = MaterialTheme.typography.bodySmall)
-                    Text("Their signing/encryption fingerprint: ${remoteFingerprint ?: "Security implementation not available"}")
+                    Text("Their contact fingerprint: ${remoteFingerprint ?: "Security implementation not available"}")
                     Text("Compare this fingerprint with the other person's own screen through a trusted channel. Importing a card or matching a phone name does not verify it.")
                     Row {
                         Checkbox(checked = compared,

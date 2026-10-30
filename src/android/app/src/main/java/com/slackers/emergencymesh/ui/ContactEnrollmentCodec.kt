@@ -1,10 +1,7 @@
 package com.slackers.emergencymesh.ui
 
 import com.slackers.emergencymesh.core.ContactCard
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
-import java.io.DataOutputStream
+import com.slackers.emergencymesh.core.PacketCodec
 import java.io.IOException
 import java.util.Base64
 
@@ -16,15 +13,8 @@ internal object ContactEnrollmentCodec {
 
     fun encode(card: ContactCard): String {
         validate(card)
-        val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { out ->
-            out.field(card.deviceId.toByteArray(Charsets.UTF_8))
-            out.field(card.displayName.toByteArray(Charsets.UTF_8))
-            out.field(card.signingPublicKey)
-            out.field(card.encryptionPublicKey)
-            // verified is deliberately never exported. Trust belongs to this receiver.
-        }
-        return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes.toByteArray())
+        // Use M1's shared codec: the verified flag is deliberately never exported.
+        return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(PacketCodec.encodeContactCard(card))
     }
 
     fun decode(text: String): ContactCard {
@@ -37,15 +27,7 @@ internal object ContactEnrollmentCodec {
             throw IllegalArgumentException("Contact card contains invalid transfer text.")
         }
         try {
-            val input = DataInputStream(ByteArrayInputStream(bytes))
-            val card = ContactCard(
-                deviceId = String(input.field(512), Charsets.UTF_8),
-                displayName = String(input.field(320), Charsets.UTF_8),
-                signingPublicKey = input.field(MAX_KEY_BYTES),
-                encryptionPublicKey = input.field(MAX_KEY_BYTES),
-                verified = false,
-            )
-            require(input.available() == 0) { "Contact card contains unexpected extra data." }
+            val card = PacketCodec.decodeContactCard(bytes).copy(verified = false)
             validate(card)
             return card
         } catch (_: IOException) {
@@ -61,16 +43,6 @@ internal object ContactEnrollmentCodec {
             card.encryptionPublicKey.size in 1..MAX_KEY_BYTES) { "Public keys are missing or too large." }
     }
 
-    private fun DataOutputStream.field(bytes: ByteArray) {
-        writeInt(bytes.size)
-        write(bytes)
-    }
-
-    private fun DataInputStream.field(limit: Int): ByteArray {
-        val length = readInt()
-        require(length in 1..limit && length <= available()) { "Invalid contact field length." }
-        return ByteArray(length).also(::readFully)
-    }
 }
 
 /** Never silently replace pinned keys or downgrade a previously verified contact. */
