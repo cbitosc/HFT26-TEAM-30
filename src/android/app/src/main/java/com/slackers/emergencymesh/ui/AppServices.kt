@@ -13,7 +13,10 @@ data class AppServices(
     val device: LocalDevice,
     val repository: MessageRepository? = null,
     val security: MessageSecurity? = null,
+    val engineLifecycle: EngineLifecycle? = null,
     /** Read-only bridge while M3's repository/engine is still being implemented. */
     val storedMessages: StoredMessages? = null,
     val radioLog: StateFlow<List<TransportLogEntry>>? = null,
+    val readDebugAllowlist: () -> Set<String>? = { null },
+    val initializationError: String? = null,
 )

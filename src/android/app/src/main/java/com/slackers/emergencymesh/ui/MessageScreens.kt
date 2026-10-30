@@ -64,6 +64,7 @@ internal fun ChatsScreen(
     onInspect: (ContactCard) -> Unit,
     onNearby: () -> Unit,
     onSos: () -> Unit,
+    onEnroll: () -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -82,6 +83,7 @@ internal fun ChatsScreen(
             Notice("Incoming SOS", "An emergency alert is available. Open SOS to read it.")
         }
         item { Text("CONTACTS", style = MaterialTheme.typography.labelLarge) }
+        item { OutlinedButton(onClick = onEnroll) { Text("Enroll a contact") } }
         if (contacts.isEmpty()) item {
             Notice("No enrolled contacts", "Find nearby phones and enroll their public contact cards with your team. Verify fingerprints before sending direct messages.")
         }
@@ -227,6 +229,9 @@ internal fun SosScreen(
     alerts: List<ChatMessage>,
     sending: Boolean,
     canSend: Boolean,
+    groupConfigured: Boolean,
+    canConfigureGroup: Boolean,
+    onConfigureGroup: () -> Unit,
     onRequestLocation: () -> Unit,
     onSend: (String, Boolean) -> Unit,
 ) {
@@ -240,6 +245,12 @@ internal fun SosScreen(
     ) {
         item { SectionHeading("Emergency SOS", "Broadcast to participating enrolled devices.") }
         item { Notice("Highest queue priority", "An SOS can be carried by nearby participants. It does not directly contact emergency services, and receipt by everyone is not guaranteed.") }
+        if (canConfigureGroup) item {
+            if (!groupConfigured) Notice("SOS group not configured", "Set the same group code on participating phones before sending or reading group SOS alerts.")
+            TextButton(enabled = !sending, onClick = onConfigureGroup) {
+                Text(if (groupConfigured) "Change SOS group code" else "Set SOS group code")
+            }
+        }
         item {
             OutlinedTextField(
                 value = draft,

@@ -60,11 +60,14 @@ import com.slackers.emergencymesh.transport.RadioReadiness
 import com.slackers.emergencymesh.transport.TransportLogEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,11 +87,24 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var conversationId by rememberSaveable { mutableStateOf<String?>(null) }
     val tab = AppTab.valueOf(tabName)
     var discoveryRequested by remember { mutableStateOf(false) }
+    var startingConnection by remember { mutableStateOf(false) }
+    var connectionStartJob by remember { mutableStateOf<Job?>(null) }
     var sendingDirect by remember { mutableStateOf(false) }
     var sendingSos by remember { mutableStateOf(false) }
     var directSubmission by remember { mutableStateOf(0) }
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
+    var enrollmentOpen by remember { mutableStateOf(false) }
+    var enrolling by remember { mutableStateOf(false) }
+    var enrollmentError by remember { mutableStateOf<String?>(null) }
+    var groupCodeOpen by remember { mutableStateOf(false) }
+    var savingGroupCode by remember { mutableStateOf(false) }
+    var groupCodeError by remember { mutableStateOf<String?>(null) }
+    var hasGroupKey by remember(services) { mutableStateOf(services?.security?.hasGroupKey == true) }
+    val debugTools = remember(context) { isDebugBuild(context) }
+    var topologyOpen by remember { mutableStateOf(false) }
+    var topologyError by remember { mutableStateOf<String?>(null) }
+    var debugAllowlist by remember(services) { mutableStateOf(services?.readDebugAllowlist?.invoke()) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
     var device by remember(services) { mutableStateOf(services?.device) }
     var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
@@ -105,6 +121,14 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         scope.launch { snackbar.showSnackbar(message) }
     }
 
+    fun stopConnection() {
+        connectionStartJob?.cancel()
+        runCatching { services?.transport?.stop() }
+        runCatching { services?.engineLifecycle?.stop?.invoke() }
+        discoveryRequested = false
+        startingConnection = false
+    }
+
     val localIdentityResult = remember(services) {
         runCatching { services?.security?.localContactCard() }
     }
@@ -112,9 +136,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val localFingerprint = remember(services, localCard) {
         localCard?.let { card -> runCatching { services?.security?.fingerprint(card) }.getOrNull() }
     }
-    val identityError = localIdentityResult.exceptionOrNull()?.message
+    val identityError = services?.initializationError ?: localIdentityResult.exceptionOrNull()?.message
     val transportDevice = localCard?.let { LocalDevice(it.deviceId, it.displayName) } ?: device
-    val canMessage = services?.repository != null && localCard != null
+    val canMessage = services?.repository != null && localCard != null && services.engineLifecycle != null
     val storageLabel = when {
         services?.repository != null -> "Message repository attached"
         services?.storedMessages != null -> "Room attached · read only"
@@ -156,6 +180,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val connected = peers.count { it.state == PeerState.CONNECTED }
     val securityLabel = when {
         services == null -> "Services not connected"
+        services.initializationError != null -> "Device identity unavailable"
         services.security == null -> "Radio setup only · encryption not connected"
         localCard == null -> "Identity unavailable"
         services.security?.isDevelopmentPlaintext == true -> "Development plaintext · not secure"
@@ -176,8 +201,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     "Rejected data from ${event.fromEndpointId}: ${event.reason}"
                 )
                 is TransportEvent.Failure -> {
-                    runCatching { services?.transport?.stop() }
-                    discoveryRequested = false
+                    stopConnection()
                     record("Transport failure: ${event.reason}")
                     notifyUser(event.reason)
                 }
@@ -191,26 +215,34 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) radioProblems = RadioReadiness.check(context)
             if (event == Lifecycle.Event.ON_STOP) {
-                runCatching { services?.transport?.stop() }
-                discoveryRequested = false
+                stopConnection()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            runCatching { services?.transport?.stop() }
+            stopConnection()
         }
     }
 
     fun startDiscovery() {
+        if (startingConnection || discoveryRequested || connectionStartJob?.isCompleted == false) return
         val active = services
         val radioDevice = transportDevice
         if (active == null || radioDevice == null) {
             notifyUser("A real transport and device ID must be wired first.")
             return
         }
+        if (active.initializationError != null) {
+            notifyUser(active.initializationError)
+            return
+        }
         if (active.security != null && localCard == null) {
             notifyUser("The security identity could not be loaded. Check Debug before starting.")
+            return
+        }
+        if (active.repository != null && active.engineLifecycle == null) {
+            notifyUser("Repository attached without its engine lifecycle. Startup is blocked until M3 is wired.")
             return
         }
         radioProblems = RadioReadiness.check(context)
@@ -222,14 +254,29 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             permissionFeedback = "Google Play services must be available before starting discovery."
             return
         }
-        try {
-            active.transport.start(radioDevice.deviceId, radioDevice.displayName)
-            discoveryRequested = true
-            permissionFeedback = null
-            record("Discovery requested as ${radioDevice.deviceId}. No message engine is started by the UI.")
-        } catch (error: Exception) {
-            record("Start failed: ${error.message}")
-            notifyUser("Could not start discovery. Check Debug.")
+        startingConnection = true
+        connectionStartJob = scope.launch {
+            try {
+                val startRadio = { active.transport.start(radioDevice.deviceId, radioDevice.displayName) }
+                val engine = active.engineLifecycle
+                if (engine != null) {
+                    engine.startBeforeTransport(startRadio)
+                    record("Engine subscribed before radio start.")
+                } else {
+                    startRadio()
+                    record("Radio setup only; engine/repository unavailable. Messaging stays disabled.")
+                }
+                discoveryRequested = true
+                permissionFeedback = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                runCatching { active.transport.stop() }
+                record("Engine/radio start failed: ${error.message}")
+                notifyUser("Could not start the connection. Check Debug.")
+            } finally {
+                startingConnection = false
+            }
         }
     }
 
@@ -290,7 +337,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 Notice(
                     if (services == null) "Integration pending" else "Connections ready · messaging pending",
                     identityError ?: if (services == null) "No services are wired. No messages will be sent."
-                    else "$storageLabel. Nearby pairing is available. Message engine and security must be connected before sending.",
+                    else "$storageLabel. Nearby pairing is available. Engine, repository and security must be connected before sending.",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
@@ -340,21 +387,24 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onInspect = { inspectedContact = it },
                     onNearby = { tabName = AppTab.NEARBY.name },
                     onSos = { tabName = AppTab.SOS.name },
+                    onEnroll = { enrollmentError = null; enrollmentOpen = true },
                 )
                 AppTab.NEARBY -> NearbyScreen(
                     peers = peers,
                     localDevice = transportDevice,
                     fingerprint = localFingerprint,
                     discoveryRequested = discoveryRequested,
+                    startingConnection = startingConnection,
                     canStart = services != null && transportDevice != null &&
+                        services.initializationError == null &&
                         (services.security == null || localCard != null),
                     permissionFeedback = permissionFeedback,
                     radioProblems = radioProblems.map(::radioProblemLabel),
                     discoveryMode = discoveryMode,
-                    canRename = services != null && services.security == null && !discoveryRequested,
+                    canRename = services != null && services.security == null && !discoveryRequested && !startingConnection,
                     onRename = { name ->
                         val current = device
-                        if (current != null && name.isNotBlank() && services?.security == null && !discoveryRequested) {
+                        if (current != null && name.isNotBlank() && services?.security == null && !discoveryRequested && !startingConnection) {
                             LocalDeviceStore.saveDisplayName(context, name.trim())
                             device = current.copy(displayName = name.trim())
                             record("Display name saved.")
@@ -375,13 +425,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         else nearbyPermissionRequest.launch(nearbyPermissions().toTypedArray())
                     },
                     onStop = {
-                        try {
-                            services?.transport?.stop()
-                            discoveryRequested = false
-                            record("Discovery stopped by user.")
-                        } catch (error: Exception) {
-                            notifyUser("Could not stop transport: ${error.message}")
-                        }
+                        stopConnection()
+                        record("Connection stopped by user.")
                     },
                     onRespond = { peer, accept ->
                         try {
@@ -399,11 +444,15 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         clipboard.setText(AnnotatedString("${transportDevice?.deviceId.orEmpty()}\n${localFingerprint ?: "Signing fingerprint not available; radio identity only."}"))
                         notifyUser("Device details copied. Pairing alone does not verify signing keys.")
                     },
+                    onEnroll = { enrollmentError = null; enrollmentOpen = true },
                 )
                 AppTab.SOS -> SosScreen(
                     alerts = alerts,
                     sending = sendingSos,
-                    canSend = canMessage,
+                    canSend = canMessage && hasGroupKey,
+                    groupConfigured = hasGroupKey,
+                    canConfigureGroup = services?.security?.isDevelopmentPlaintext == false,
+                    onConfigureGroup = { groupCodeError = null; groupCodeOpen = true },
                     onRequestLocation = {
                         sosLocationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
                             Manifest.permission.ACCESS_FINE_LOCATION))
@@ -411,7 +460,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onSend = { text, includeLocation ->
                         val active = services
                         val repository = active?.repository
-                        if (repository != null && canMessage && !sendingSos) {
+                        if (repository != null && canMessage && hasGroupKey && !sendingSos) {
                             sendingSos = true
                             scope.launch {
                                 try {
@@ -448,6 +497,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     radioLog = radioEntries.map { entry ->
                         "${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(entry.timeMillis))}  ${entry.message}"
                     },
+                    showTopologyTools = debugTools && services != null,
+                    allowlistSummary = when {
+                        debugAllowlist == null -> "Allowlist off · unrestricted radio links"
+                        debugAllowlist?.isEmpty() == true -> "All radio peers blocked"
+                        else -> "${debugAllowlist?.size} stable device IDs allowed"
+                    },
+                    onTopology = { topologyError = null; topologyOpen = true },
                     onClear = { log.clear() },
                     onCopy = {
                         val radioText = radioEntries.joinToString("\n") { "${it.timeMillis}  ${it.message}" }
@@ -459,9 +515,108 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         }
     }
 
+    if (enrollmentOpen) ContactEnrollmentDialog(
+        localCard = localCard,
+        localDeviceId = transportDevice?.deviceId,
+        fingerprint = { card -> runCatching { services?.security?.fingerprint(card) }.getOrNull() },
+        canEnroll = services?.repository != null && localCard != null,
+        saving = enrolling,
+        saveError = enrollmentError,
+        groupConfigured = hasGroupKey,
+        canConfigureGroup = services?.security?.isDevelopmentPlaintext == false,
+        onConfigureGroup = {
+            enrollmentOpen = false
+            groupCodeError = null
+            groupCodeOpen = true
+        },
+        onCopy = { publicText ->
+            clipboard.setText(AnnotatedString(publicText))
+            notifyUser("Public contact card copied. Exchange it and compare fingerprints separately.")
+        },
+        onEnroll = { incoming, compared ->
+            val repository = services?.repository
+            val ownId = transportDevice?.deviceId
+            if (repository != null && ownId != null && localCard != null && !enrolling) {
+                enrolling = true
+                enrollmentError = null
+                scope.launch {
+                    try {
+                        val saved = withContext(Dispatchers.IO) {
+                            val snapshot = withTimeoutOrNull(5_000) { repository.contacts.first() }
+                                ?: throw IllegalStateException("Contact storage did not respond. Try again after it is ready.")
+                            val existing = snapshot.firstOrNull { it.deviceId == incoming.deviceId }
+                            val card = contactForEnrollment(incoming, existing, ownId, compared)
+                            repository.saveContact(card)
+                            card
+                        }
+                        record("Contact enrolled: ${saved.deviceId}; verified=${saved.verified}")
+                        enrollmentOpen = false
+                        notifyUser(if (saved.verified) "Contact enrolled with fingerprint verification."
+                            else "Contact saved as unverified. Compare fingerprints before messaging.")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        enrollmentError = failure.message ?: "Contact could not be saved."
+                    } finally { enrolling = false }
+                }
+            }
+        },
+        onDismiss = { enrollmentOpen = false },
+    )
+
+    if (groupCodeOpen && services?.security?.isDevelopmentPlaintext == false) GroupCodeDialog(
+        configured = hasGroupKey,
+        saving = savingGroupCode,
+        error = groupCodeError,
+        onSave = { code ->
+            val security = services.security
+            if (security != null && !savingGroupCode) {
+                savingGroupCode = true
+                groupCodeError = null
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { security.setGroupCode(code) }
+                        hasGroupKey = security.hasGroupKey
+                        check(hasGroupKey) { "Group setup did not complete." }
+                        groupCodeOpen = false
+                        record("SOS group configured. The code is not logged.")
+                        notifyUser("SOS group configured on this phone. Other phones need the same code.")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        groupCodeError = failure.message ?: "Group code could not be saved."
+                    } finally { savingGroupCode = false }
+                }
+            }
+        },
+        onDismiss = { groupCodeOpen = false },
+    )
+
+    if (topologyOpen && debugTools && services != null) DebugTopologyDialog(
+        allowed = debugAllowlist,
+        knownDevices = contacts.associate { it.deviceId to it.displayName } +
+            peers.associate { it.deviceId to it.displayName },
+        localDeviceId = transportDevice?.deviceId,
+        applyError = topologyError,
+        onApply = { requested ->
+            if (debugTools) {
+                try {
+                    services.transport.setDebugAllowlist(requested)
+                    debugAllowlist = services.readDebugAllowlist()
+                    record("Debug radio filter applied: ${requested?.joinToString() ?: "unrestricted"}")
+                    topologyOpen = false
+                } catch (failure: Exception) {
+                    topologyError = failure.message ?: "Allowlist could not be changed."
+                }
+            }
+        },
+        onDismiss = { topologyOpen = false },
+    )
+
     inspectedContact?.let { card ->
         var compared by remember(card) { mutableStateOf(false) }
         var saving by remember(card) { mutableStateOf(false) }
+        var verificationError by remember(card) { mutableStateOf<String?>(null) }
         val fingerprint = remember(card, services) {
             runCatching { services?.security?.fingerprint(card) }.getOrNull()
         }
@@ -477,6 +632,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         Checkbox(checked = compared, onCheckedChange = { compared = it })
                         Text("I compared the fingerprints and they match.", Modifier.padding(top = 8.dp))
                     } else Text("This contact is already marked verified.")
+                    verificationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
             confirmButton = {
@@ -486,17 +642,25 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onClick = {
                         val active = services
                         val repository = active?.repository
-                        if (repository != null) {
+                        val ownId = transportDevice?.deviceId
+                        if (repository != null && ownId != null) {
                             saving = true
+                            verificationError = null
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { repository.saveContact(card.copy(verified = true)) }
+                                    withContext(Dispatchers.IO) {
+                                        val latest = withTimeoutOrNull(5_000) { repository.contacts.first() }
+                                            ?: throw IllegalStateException("Contact storage did not respond.")
+                                        val existing = latest.firstOrNull { it.deviceId == card.deviceId }
+                                            ?: throw IllegalStateException("This contact was removed. Enroll it again.")
+                                        repository.saveContact(contactForEnrollment(card, existing, ownId, true))
+                                    }
                                     record("Contact verified by user: ${card.deviceId}")
                                     inspectedContact = null
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    notifyUser("Could not save contact verification: ${error.message}")
+                                    verificationError = error.message ?: "Could not save contact verification."
                                 } finally { saving = false }
                             }
                         }
