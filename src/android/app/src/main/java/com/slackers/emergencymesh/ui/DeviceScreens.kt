@@ -38,6 +38,7 @@ internal fun NearbyScreen(
     localDevice: LocalDevice?,
     fingerprint: String?,
     discoveryRequested: Boolean,
+    startingConnection: Boolean,
     canStart: Boolean,
     permissionFeedback: String?,
     radioProblems: List<String>,
@@ -90,8 +91,8 @@ internal fun NearbyScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onStart, enabled = canStart && !discoveryRequested,
-                    modifier = Modifier.weight(1f)) { Text("Start discovery") }
+                Button(onClick = onStart, enabled = canStart && !discoveryRequested && !startingConnection,
+                    modifier = Modifier.weight(1f)) { Text(if (startingConnection) "Starting…" else "Start discovery") }
                 OutlinedButton(onClick = onStop, enabled = canStart,
                     modifier = Modifier.weight(1f)) { Text("Stop") }
             }

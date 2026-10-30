@@ -60,6 +60,7 @@ import com.slackers.emergencymesh.transport.RadioReadiness
 import com.slackers.emergencymesh.transport.TransportLogEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
@@ -84,6 +85,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var conversationId by rememberSaveable { mutableStateOf<String?>(null) }
     val tab = AppTab.valueOf(tabName)
     var discoveryRequested by remember { mutableStateOf(false) }
+    var startingConnection by remember { mutableStateOf(false) }
+    var connectionStartJob by remember { mutableStateOf<Job?>(null) }
     var sendingDirect by remember { mutableStateOf(false) }
     var sendingSos by remember { mutableStateOf(false) }
     var directSubmission by remember { mutableStateOf(0) }
@@ -105,6 +108,15 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         scope.launch { snackbar.showSnackbar(message) }
     }
 
+    fun stopConnection() {
+        connectionStartJob?.cancel()
+        connectionStartJob = null
+        runCatching { services?.transport?.stop() }
+        runCatching { services?.engineLifecycle?.stop?.invoke() }
+        discoveryRequested = false
+        startingConnection = false
+    }
+
     val localIdentityResult = remember(services) {
         runCatching { services?.security?.localContactCard() }
     }
@@ -114,7 +126,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     }
     val identityError = localIdentityResult.exceptionOrNull()?.message
     val transportDevice = localCard?.let { LocalDevice(it.deviceId, it.displayName) } ?: device
-    val canMessage = services?.repository != null && localCard != null
+    val canMessage = services?.repository != null && localCard != null && services.engineLifecycle != null
     val storageLabel = when {
         services?.repository != null -> "Message repository attached"
         services?.storedMessages != null -> "Room attached · read only"
@@ -176,8 +188,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     "Rejected data from ${event.fromEndpointId}: ${event.reason}"
                 )
                 is TransportEvent.Failure -> {
-                    runCatching { services?.transport?.stop() }
-                    discoveryRequested = false
+                    stopConnection()
                     record("Transport failure: ${event.reason}")
                     notifyUser(event.reason)
                 }
@@ -191,18 +202,18 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) radioProblems = RadioReadiness.check(context)
             if (event == Lifecycle.Event.ON_STOP) {
-                runCatching { services?.transport?.stop() }
-                discoveryRequested = false
+                stopConnection()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            runCatching { services?.transport?.stop() }
+            stopConnection()
         }
     }
 
     fun startDiscovery() {
+        if (startingConnection || discoveryRequested) return
         val active = services
         val radioDevice = transportDevice
         if (active == null || radioDevice == null) {
@@ -211,6 +222,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         }
         if (active.security != null && localCard == null) {
             notifyUser("The security identity could not be loaded. Check Debug before starting.")
+            return
+        }
+        if (active.repository != null && active.engineLifecycle == null) {
+            notifyUser("Repository attached without its engine lifecycle. Startup is blocked until M3 is wired.")
             return
         }
         radioProblems = RadioReadiness.check(context)
@@ -222,14 +237,29 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             permissionFeedback = "Google Play services must be available before starting discovery."
             return
         }
-        try {
-            active.transport.start(radioDevice.deviceId, radioDevice.displayName)
-            discoveryRequested = true
-            permissionFeedback = null
-            record("Discovery requested as ${radioDevice.deviceId}. No message engine is started by the UI.")
-        } catch (error: Exception) {
-            record("Start failed: ${error.message}")
-            notifyUser("Could not start discovery. Check Debug.")
+        startingConnection = true
+        connectionStartJob = scope.launch {
+            try {
+                val startRadio = { active.transport.start(radioDevice.deviceId, radioDevice.displayName) }
+                val engine = active.engineLifecycle
+                if (engine != null) {
+                    engine.startBeforeTransport(startRadio)
+                    record("Engine subscribed before radio start.")
+                } else {
+                    startRadio()
+                    record("Radio setup only; engine/repository unavailable. Messaging stays disabled.")
+                }
+                discoveryRequested = true
+                permissionFeedback = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                runCatching { active.transport.stop() }
+                record("Engine/radio start failed: ${error.message}")
+                notifyUser("Could not start the connection. Check Debug.")
+            } finally {
+                startingConnection = false
+            }
         }
     }
 
@@ -290,7 +320,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 Notice(
                     if (services == null) "Integration pending" else "Connections ready · messaging pending",
                     identityError ?: if (services == null) "No services are wired. No messages will be sent."
-                    else "$storageLabel. Nearby pairing is available. Message engine and security must be connected before sending.",
+                    else "$storageLabel. Nearby pairing is available. Engine, repository and security must be connected before sending.",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
@@ -346,15 +376,16 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     localDevice = transportDevice,
                     fingerprint = localFingerprint,
                     discoveryRequested = discoveryRequested,
+                    startingConnection = startingConnection,
                     canStart = services != null && transportDevice != null &&
                         (services.security == null || localCard != null),
                     permissionFeedback = permissionFeedback,
                     radioProblems = radioProblems.map(::radioProblemLabel),
                     discoveryMode = discoveryMode,
-                    canRename = services != null && services.security == null && !discoveryRequested,
+                    canRename = services != null && services.security == null && !discoveryRequested && !startingConnection,
                     onRename = { name ->
                         val current = device
-                        if (current != null && name.isNotBlank() && services?.security == null && !discoveryRequested) {
+                        if (current != null && name.isNotBlank() && services?.security == null && !discoveryRequested && !startingConnection) {
                             LocalDeviceStore.saveDisplayName(context, name.trim())
                             device = current.copy(displayName = name.trim())
                             record("Display name saved.")
@@ -375,13 +406,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         else nearbyPermissionRequest.launch(nearbyPermissions().toTypedArray())
                     },
                     onStop = {
-                        try {
-                            services?.transport?.stop()
-                            discoveryRequested = false
-                            record("Discovery stopped by user.")
-                        } catch (error: Exception) {
-                            notifyUser("Could not stop transport: ${error.message}")
-                        }
+                        stopConnection()
+                        record("Engine and transport stopped by user.")
                     },
                     onRespond = { peer, accept ->
                         try {

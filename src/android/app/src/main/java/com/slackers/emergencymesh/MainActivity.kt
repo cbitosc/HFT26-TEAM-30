@@ -30,8 +30,10 @@ class MainActivity : ComponentActivity() {
             device = LocalDeviceStore.load(applicationContext),
             storedMessages = StoredMessages(database.emergencyMeshDao()),
             radioLog = transport.log,
-            // Add M3's real repository and M4's real security here when available.
-            // No send-capable fallback is installed while these are absent.
+            // Waiting on the published M3 engine/repository and M4 security constructors.
+            // Attach those real instances here, with EngineLifecycle wired to M3's
+            // actual start/readiness/stop API. The UI awaits it before transport.start.
+            // No placeholder engine or send-capable crypto fallback is installed.
         )
     }
 }
