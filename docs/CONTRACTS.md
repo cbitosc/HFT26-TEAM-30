@@ -65,6 +65,29 @@ Build a packet in this order:
 - M3 decides what to forward, retry, deduplicate and ACK.
 - Use `deviceId` for identity and `endpointId` only for a live connection.
 
+Use the real transport like this, on the main thread:
+
+```kotlin
+val transport = NearbyMeshTransport.create(context)
+val device = LocalDeviceStore.load(context)
+
+// Collect first. Missed events are not replayed.
+scope.launch { transport.events.collect(engine::onTransportEvent) }
+
+val problems = RadioReadiness.check(context) // show these to the user
+transport.start(device.deviceId, device.displayName)
+```
+
+- **M2:** request `RadioReadiness.requiredPermissions()` before `start`, and show each `RadioProblem`.
+- **M2:** when a peer is `AWAITING_APPROVAL`, show `authToken` on both phones, then call `respondToConnection`.
+- **M2:** `transport.log` holds recent radio activity for the Debug section.
+- **M3:** handle `PacketReceived(fromEndpointId, packet)`, and never echo a packet back to `fromEndpointId`.
+- **M3:** re-check retained packets for a peer on every `PeerConnected`.
+- **M3:** `send` returning `TransportComplete` only means the bytes left this phone.
+- **M3:** set `DiscoveryMode.CONTINUOUS` while an SOS is active, then return to `BALANCED`.
+
+Approved peers reconnect without another prompt. This approval only controls the radio link, so identity still depends on M4's signature checks.
+
 ## Security
 
 - `MessageSecurity` is the only crypto interface.
