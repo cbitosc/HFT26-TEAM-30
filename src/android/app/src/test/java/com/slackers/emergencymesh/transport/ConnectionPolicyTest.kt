@@ -37,7 +37,7 @@ class ConnectionPolicyTest {
     @Test
     fun onlyLowerIdRequestsWithoutDelay() {
         assertEquals(0, policy.initiatorDelayMillis("a", "b"))
-        assertEquals(8_000, policy.initiatorDelayMillis("b", "a"))
+        assertEquals(30_000, policy.initiatorDelayMillis("b", "a"))
     }
 
     @Test

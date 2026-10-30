@@ -31,7 +31,7 @@ internal object EndpointName {
 }
 
 internal data class TransportConfig(
-    val initiatorFallbackMillis: Long = 8_000,
+    val initiatorFallbackMillis: Long = 30_000,
     val baseBackoffMillis: Long = 2_000,
     val maxBackoffMillis: Long = 30_000,
     val maxConnectAttempts: Int = 8,

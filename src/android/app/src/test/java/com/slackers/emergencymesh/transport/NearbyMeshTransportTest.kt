@@ -38,6 +38,8 @@ private class FakeRadio : NearbyRadio {
     var discoveryStarts = 0
     var discoveryStops = 0
     var requestResult = RadioResult(true)
+    var holdRequestResults = false
+    var heldRequestResult: ((RadioResult) -> Unit)? = null
     var advertisedName = ""
     private var nextPayloadId = 1L
 
@@ -61,7 +63,7 @@ private class FakeRadio : NearbyRadio {
 
     override fun requestConnection(name: String, endpointId: String, onResult: (RadioResult) -> Unit) {
         requests += endpointId
-        onResult(requestResult)
+        if (holdRequestResults) heldRequestResult = onResult else onResult(requestResult)
     }
 
     override fun acceptConnection(endpointId: String, onResult: (RadioResult) -> Unit) {
@@ -154,7 +156,7 @@ class NearbyMeshTransportTest {
     fun higherDeviceIdWaitsThenFallsBack() = runTest {
         val transport = transport()
         radio.listener!!.onEndpointFound("e1", name(LOW_ID))
-        advanceTimeBy(7_000)
+        advanceTimeBy(29_000)
         runCurrent()
         assertTrue(radio.requests.isEmpty())
         advanceTimeBy(1_100)
@@ -169,7 +171,7 @@ class NearbyMeshTransportTest {
         radio.listener!!.onEndpointFound("e1", name(LOW_ID))
         runCurrent()
         radio.listener!!.onConnectionInitiated("e1", name(LOW_ID), "1234")
-        advanceTimeBy(20_000)
+        advanceTimeBy(35_000)
         runCurrent()
         assertTrue(radio.requests.isEmpty())
         transport.stop()
@@ -201,6 +203,44 @@ class NearbyMeshTransportTest {
         transport.start(LOCAL_ID, "  ")
         runCurrent()
         assertEquals(EndpointName.encode(LOCAL_ID, "Phone mmmm"), radio.advertisedName)
+        transport.stop()
+    }
+
+    @Test
+    fun lateRequestFailureKeepsEstablishedConnection() = runTest {
+        val transport = transport()
+        store.approved += HIGH_ID
+        radio.holdRequestResults = true
+        radio.listener!!.onEndpointFound("e1", name(HIGH_ID))
+        runCurrent()
+        radio.listener!!.onConnectionInitiated("e1", name(HIGH_ID), "1234")
+        radio.listener!!.onConnectionResult("e1", true, 0)
+
+        radio.heldRequestResult!!(
+            RadioResult(false, ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR),
+        )
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(PeerState.CONNECTED, transport.peers.value.single().state)
+        assertEquals(1, radio.requests.size)
+        transport.stop()
+    }
+
+    @Test
+    fun earlyRequestFailureStillAcceptsIncomingHandshake() = runTest {
+        val transport = transport()
+        store.approved += HIGH_ID
+        radio.requestResult = RadioResult(false, ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR)
+        radio.listener!!.onEndpointFound("e1", name(HIGH_ID))
+        runCurrent()
+        radio.listener!!.onConnectionInitiated("e1", name(HIGH_ID), "1234")
+        radio.listener!!.onConnectionResult("e1", true, 0)
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(PeerState.CONNECTED, transport.peers.value.single().state)
+        assertEquals(1, radio.requests.size)
         transport.stop()
     }
 

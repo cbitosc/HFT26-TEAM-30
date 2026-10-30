@@ -34,6 +34,31 @@ The first discovery, pairing and restart test ran before airplane mode was on, s
 
 Each round-trip set includes one sample from the earlier online run.
 
+## Final build recheck
+
+The first results above used commit `1a9fcb7`. This recheck ran on the build with the connection fixes, between 00:46 and 00:50 IST, with the same phones and offline setup.
+
+| Check | Result |
+| --- | --- |
+| No internet | Both phones printed `Network is unreachable` before and after |
+| Connection | Connected 18 seconds after both phones started, with no error |
+| Ping from vivo | 5 of 5 replied, median 117 ms |
+| Ping from Samsung | 5 of 5 replied, median 99 ms |
+| Text | `hello71` and `hello82` each arrived on the other phone |
+| Errors | No send failures or malformed packets in the collected screens |
+
+## Connection collisions
+
+Phone testing showed both phones requesting a connection at the same moment, which failed with `STATUS_ENDPOINT_IO_ERROR` (8012) before recovering. Bluetooth-only connecting took about 20 seconds, which was longer than the 8-second fallback wait.
+
+| Fallback wait | Runs | Result |
+| --- | --- | --- |
+| 8 seconds | 2 | Error 8012 in both runs, then recovered |
+| 20 seconds | 1 | No error |
+| 30 seconds, final build | 1 | No error |
+
+The final build also ignores a late request failure once a handshake has started. These are small samples, so a collision may still happen, but the phones recovered each time it did.
+
 ## Packet IDs match across phones
 
 The radio logs show the same packets from both sides. The vivo logged `Sent MESSAGE b60350ce`, and the Samsung logged `Received MESSAGE b60350ce`. The Samsung logged `Sent MESSAGE da864ca5`, and the vivo logged `Received MESSAGE da864ca5`.

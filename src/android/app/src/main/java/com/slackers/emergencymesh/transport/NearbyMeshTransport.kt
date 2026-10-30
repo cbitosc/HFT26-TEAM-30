@@ -362,7 +362,10 @@ class NearbyMeshTransport internal constructor(
         publishPeers()
         log("Requesting ${entry.label()}")
         radio.requestConnection(endpointName, entry.endpointId) { result ->
-            if (!result.ok && entry.connectAttempt == attempt) {
+            // When both phones ask at once, one request can fail after the other's handshake began.
+            val stillRequesting = entry.connectAttempt == attempt &&
+                entry.state == PeerState.CONNECTING && entry.authToken == null
+            if (!result.ok && stillRequesting) {
                 log("Request failed for ${entry.label()}: ${result.describe()}")
                 handleConnectFailure(entry, result.code)
             }
