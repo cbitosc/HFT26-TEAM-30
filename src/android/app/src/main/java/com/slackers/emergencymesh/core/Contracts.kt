@@ -65,7 +65,18 @@ sealed interface SendResult {
     data class Failed(val reason: String) : SendResult
 }
 
-/** Moves packets between immediate neighbors only. Relay decisions belong to the engine. */
+enum class DiscoveryMode {
+    /** Scan all the time. Use while an SOS is active and for battery comparison runs. */
+    CONTINUOUS,
+
+    /** Scan in bursts, and pause scanning once enough peers are connected. */
+    BALANCED,
+}
+
+/**
+ * Moves packets between immediate neighbors only. Relay decisions belong to the engine.
+ * Collect [events] before calling [start], because missed events are not replayed.
+ */
 interface MeshTransport {
     val peers: StateFlow<List<PeerInfo>>
     val events: SharedFlow<TransportEvent>
@@ -79,6 +90,8 @@ interface MeshTransport {
 
     /** Debug only. Null allows everyone. Otherwise only these stable device IDs may connect. */
     fun setDebugAllowlist(deviceIds: Set<String>?)
+
+    fun setDiscoveryMode(mode: DiscoveryMode) {}
 }
 
 /** Implemented by M4 with Tink. Failed decryption or verification throws SecurityException. */
