@@ -91,7 +91,33 @@ transport.start(device.deviceId, device.displayName)
 
 Approved peers reconnect without another prompt. This approval only controls the radio link, so identity still depends on M4's signature checks.
 
+## Contact exchange
+
+Phones must swap contact cards before direct messaging, so enroll all phones before forcing the A-B-C topology.
+
+**M3 engine:**
+
+1. On `PeerConnected`, send `ContactExchange.buildPacket(security, uuid, now)` straight to that endpoint. Don't queue it.
+2. On a received `CONTACT_CARD`, call `ContactExchange.readPacket(security, packet, peer.deviceId)`. A `SecurityException` means drop it and log why.
+3. Call `ContactExchange.compare(storedCard, card)`:
+   - `NEW`: save it with `verified = false`.
+   - `UNCHANGED`: keep the stored card.
+   - `KEYS_CHANGED`: keep the stored card and show a warning. Never overwrite it automatically.
+4. Never forward, ACK or display a `CONTACT_CARD`. Its TTL is 0, and a forwarded card is rejected.
+
+A received card is never verified. It only becomes verified when a person compares fingerprints in the app.
+
 ## Security
+
+**M2:** attach security in `MainActivity`:
+
+```kotlin
+security = SecurityProvider.create(applicationContext),
+```
+
+- Debug builds return `DevelopmentPlaintextSecurity`, which is **not secure** and exists only to test relay before Tink. The app labels it "Development plaintext · not secure".
+- Release builds return `null`, so they can't send plaintext.
+- **M4:** replace both `SecurityProvider` files with the Tink provider, then delete `DevelopmentPlaintextSecurity`. Never claim a build is secure while `isDevelopmentPlaintext` is true.
 
 - `MessageSecurity` is the only crypto interface.
 - `isDevelopmentPlaintext` must be false in the final demo.

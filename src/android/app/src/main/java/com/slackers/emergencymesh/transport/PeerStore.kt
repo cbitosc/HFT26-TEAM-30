@@ -50,7 +50,8 @@ object LocalDeviceStore {
         val deviceId = prefs.getString(KEY_ID, null) ?: UUID.randomUUID().toString().also {
             prefs.edit().putString(KEY_ID, it).apply()
         }
-        val displayName = prefs.getString(KEY_NAME, null) ?: "Phone ${deviceId.take(4)}"
+        val displayName = prefs.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() }
+            ?: "Phone ${deviceId.take(4)}"
         return LocalDevice(deviceId, displayName)
     }
 
