@@ -35,6 +35,8 @@ Status as of 31 October 2026, 03:10 IST. Update this from real results only.
 | [Forced three-phone topology](evidence/three-phone-topology.md) | Passed, one hop only |
 | [Security tests](evidence/tink-security.md), on `member4/security` | Passed, not integrated |
 | Room restart test | Passed on a Samsung |
+| Real app smoke test | Passed on a Samsung, on 31 October at 03:10 IST: all 4 tabs opened with no crash |
+| Denied nearby permissions | Passed on a Samsung: the app showed 4 missing permissions and didn't start discovery |
 
 ## Phones tested
 
@@ -48,7 +50,7 @@ Status as of 31 October 2026, 03:10 IST. Update this from real results only.
 
 | Test | Depends on | Pass when |
 | --- | --- | --- |
-| Install and permissions in the real app | Nothing | App opens on 3 phones, and denied permissions show a clear message |
+| Install and permissions on vivo and OnePlus | Nothing | App opens, and denied permissions show a clear message |
 | Discovery and pairing in the real app | Nothing | Phones pair after comparing the code |
 | Contact enrollment | M2 and M3 | Both phones show matching fingerprints, then mark each other verified |
 | Direct message offline | M2 and M3 | Text arrives once, and status reaches Delivered |
