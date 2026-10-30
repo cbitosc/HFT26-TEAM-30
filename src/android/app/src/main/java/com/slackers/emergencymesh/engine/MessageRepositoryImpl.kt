@@ -23,6 +23,7 @@ import com.slackers.emergencymesh.data.MessageEntity
 import com.slackers.emergencymesh.data.QueuedPacketEntity
 import com.slackers.emergencymesh.data.SeenPacketEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -57,10 +58,19 @@ class MessageRepositoryImpl(
     override fun conversation(deviceId: String): Flow<List<ChatMessage>> =
         dao.observeConversation(deviceId).map { rows -> rows.mapNotNull(::toChatMessage) }
 
-    /** Start once from app wiring; retry retained packets whenever a peer reconnects. */
-    fun start() {
-        if (eventJob != null) return
-        eventJob = workers().launch {
+    /**
+     * Subscribe before returning so callers can safely start the radio immediately afterward.
+     * UNDISPATCHED runs the collector through SharedFlow subscription before its first suspension.
+     */
+    fun start() = startInternal()
+
+    /** Suspendable adapter for EngineLifecycle; subscription is already ready on return. */
+    suspend fun startAndAwaitReady() = startInternal()
+
+    @Synchronized
+    private fun startInternal() {
+        if (eventJob?.isActive == true) return
+        eventJob = workers().launch(start = CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
                 when (event) {
                     is TransportEvent.PeerConnected -> dispatchTo(event.peer)
@@ -74,6 +84,7 @@ class MessageRepositoryImpl(
             .forEach { peer -> engineScope.launch { dispatchTo(peer) } }
     }
 
+    @Synchronized
     fun stop() {
         eventJob?.cancel()
         eventJob = null
@@ -182,11 +193,14 @@ class MessageRepositoryImpl(
         if (peer.state != PeerState.CONNECTED || peer.deviceId == localCard.deviceId) return
         val lock = synchronized(peerLocks) { peerLocks.getOrPut(peer.deviceId) { Mutex() } }
         lock.withLock {
-            val now = nowMillis()
-            dao.pruneExpiredPackets(now)
-            dao.pruneOrphanedPeerReceipts()
-            val due = dao.dueOutgoingForPeer(peer.deviceId, now, DISPATCH_BATCH_SIZE)
-            for (queued in due) {
+            var dispatched = 0
+            while (dispatched < DISPATCH_BATCH_SIZE) {
+                val now = nowMillis()
+                dao.pruneExpiredPackets(now)
+                dao.pruneOrphanedPeerReceipts()
+                // Re-query after every transfer so newly queued P0 SOS work jumps ahead of
+                // the remaining backlog instead of waiting for a stale batch to drain.
+                val queued = dao.dueOutgoingForPeer(peer.deviceId, now, limit = 1).firstOrNull() ?: break
                 val prior = dao.receipt(queued.packetId, peer.deviceId)
                 val attempt = (prior?.attemptCount ?: 0) + 1
                 dao.putPeerReceipt(
@@ -198,8 +212,13 @@ class MessageRepositoryImpl(
                         nextAttemptAtMillis = now + retryDelayMillis(attempt),
                     ),
                 )
-                val packet = runCatching { PacketCodec.decode(queued.encodedPacket) }.getOrNull() ?: continue
+                val packet = runCatching { PacketCodec.decode(queued.encodedPacket) }.getOrNull()
+                if (packet == null) {
+                    dao.deleteQueuedPacket(queued.packetId)
+                    continue
+                }
                 transport.send(peer.endpointId, packet)
+                dispatched++
                 // A transport-complete result is deliberately not an application receipt.
                 workers().launch {
                     delay(retryDelayMillis(attempt))
@@ -213,6 +232,9 @@ class MessageRepositoryImpl(
     }
 
     private suspend fun handleIncoming(fromEndpointId: String, packet: Packet) {
+        // ContactCardService owns direct card exchange and enrollment. The relay engine must
+        // never retain, acknowledge, forward, or display a contact-card packet.
+        if (packet.type == PacketType.CONTACT_CARD) return
         if (!isValidHopState(packet)) return
         val source = transport.peers.value.firstOrNull { it.endpointId == fromEndpointId } ?: return
         val sender = dao.contact(packet.senderId)?.let(::toCard) ?: return
