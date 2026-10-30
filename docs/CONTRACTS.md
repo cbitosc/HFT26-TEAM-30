@@ -115,12 +115,9 @@ A received card is never verified. It only becomes verified when a person compar
 security = SecurityProvider.create(applicationContext),
 ```
 
-- Debug and release builds both use `TinkMessageSecurity`. The plaintext stand-in is gone.
-- **M2:** add a group code field for enrollment. Call `security.setGroupCode(code)`, and show when `security.hasGroupKey` is false. Every enrolled phone must enter the same code of at least 8 characters.
-- **M2:** never commit a real group code, and don't hardcode one.
-- **M3:** `encryptDirect` refuses a recipient unless `ContactCard.verified` is true. Keep the message Pending when the contact isn't verified yet.
-- **M3:** `encryptBroadcast` throws `SecurityException` without a group code. Show that failure instead of dropping the SOS.
-- Build the packet with an empty body, encrypt with `PacketCodec.associatedData(packet)`, then sign. The receiver verifies before decrypting.
+- Debug builds return `DevelopmentPlaintextSecurity`, which is **not secure** and exists only to test relay before Tink. The app labels it "Development plaintext · not secure".
+- Release builds return `null`, so they can't send plaintext.
+- **M4:** replace both `SecurityProvider` files with the Tink provider, then delete `DevelopmentPlaintextSecurity`. Never claim a build is secure while `isDevelopmentPlaintext` is true.
 
 - `MessageSecurity` is the only crypto interface.
 - `isDevelopmentPlaintext` must be false in the final demo.

@@ -29,14 +29,15 @@ class MainActivity : ComponentActivity() {
         // A persisted debug topology must never silently restrict a release build.
         if (!isDebugBuild(applicationContext)) transport.setDebugAllowlist(null)
         val database = EmergencyMeshDatabase.getInstance(applicationContext)
-        // No plaintext fallback if the real Keystore-backed identity cannot be opened.
+        // Relay-first phase: debug explicitly selects M1's labelled plaintext provider.
+        // Release selects no provider and cannot send until Tink is re-enabled.
         val securityResult = runCatching { SecurityProvider.create(applicationContext) }
         return AppServices(
             transport = transport,
             device = LocalDeviceStore.load(applicationContext),
             security = securityResult.getOrNull(),
             initializationError = securityResult.exceptionOrNull()?.let {
-                "Secure identity could not be opened. Check the device Keystore and retry."
+                "The device identity could not be initialized. Check this build and retry."
             },
             storedMessages = StoredMessages(database.emergencyMeshDao()),
             radioLog = transport.log,
@@ -44,7 +45,7 @@ class MainActivity : ComponentActivity() {
             // Waiting on the published M3 engine/repository constructor.
             // Attach those real instances here, with EngineLifecycle wired to M3's
             // actual start/readiness/stop API. The UI awaits it before transport.start.
-            // M4's provider is attached; secure cross-phone messaging still needs engine tests.
+            // Restore M4's Tink provider only after relay passes. Never call this debug build secure.
         )
     }
 }

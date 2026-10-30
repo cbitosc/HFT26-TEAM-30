@@ -104,9 +104,11 @@ internal fun ContactEnrollmentDialog(
                 }
                 if (!canEnroll) Text("Saving waits for the real repository and security implementation.",
                     style = MaterialTheme.typography.bodySmall)
-                Text("SOS group: ${if (groupConfigured) "configured" else "not configured"}")
-                TextButton(enabled = canConfigureGroup && !saving, onClick = onConfigureGroup) {
-                    Text(if (groupConfigured) "Change SOS group code" else "Set SOS group code")
+                if (canConfigureGroup) {
+                    Text("SOS group: ${if (groupConfigured) "configured" else "not configured"}")
+                    TextButton(enabled = !saving, onClick = onConfigureGroup) {
+                        Text(if (groupConfigured) "Change SOS group code" else "Set SOS group code")
+                    }
                 }
             }
         },

@@ -180,7 +180,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val connected = peers.count { it.state == PeerState.CONNECTED }
     val securityLabel = when {
         services == null -> "Services not connected"
-        services.initializationError != null -> "Secure identity unavailable"
+        services.initializationError != null -> "Device identity unavailable"
         services.security == null -> "Radio setup only · encryption not connected"
         localCard == null -> "Identity unavailable"
         services.security?.isDevelopmentPlaintext == true -> "Development plaintext · not secure"
@@ -451,7 +451,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     sending = sendingSos,
                     canSend = canMessage && hasGroupKey,
                     groupConfigured = hasGroupKey,
-                    canConfigureGroup = services?.security != null,
+                    canConfigureGroup = services?.security?.isDevelopmentPlaintext == false,
                     onConfigureGroup = { groupCodeError = null; groupCodeOpen = true },
                     onRequestLocation = {
                         sosLocationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -523,7 +523,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         saving = enrolling,
         saveError = enrollmentError,
         groupConfigured = hasGroupKey,
-        canConfigureGroup = services?.security != null,
+        canConfigureGroup = services?.security?.isDevelopmentPlaintext == false,
         onConfigureGroup = {
             enrollmentOpen = false
             groupCodeError = null
@@ -564,7 +564,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         onDismiss = { enrollmentOpen = false },
     )
 
-    if (groupCodeOpen && services?.security != null) GroupCodeDialog(
+    if (groupCodeOpen && services?.security?.isDevelopmentPlaintext == false) GroupCodeDialog(
         configured = hasGroupKey,
         saving = savingGroupCode,
         error = groupCodeError,
