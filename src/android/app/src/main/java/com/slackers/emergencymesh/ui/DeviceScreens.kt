@@ -52,6 +52,7 @@ internal fun NearbyScreen(
     onRespond: (PeerInfo, Boolean) -> Unit,
     onSettings: () -> Unit,
     onCopyIdentity: () -> Unit,
+    onEnroll: () -> Unit,
 ) {
     var pairingEndpoint by remember { mutableStateOf<String?>(null) }
     var name by remember(localDevice?.deviceId, localDevice?.displayName) {
@@ -120,6 +121,7 @@ internal fun NearbyScreen(
         }
         permissionFeedback?.let { feedback -> item { Notice("Permission required", feedback) } }
         item { Notice("Before pairing", "Both people compare the connection token on their phones. Pair only if it matches. Contact-key enrollment is a separate step before direct messaging.") }
+        item { OutlinedButton(onClick = onEnroll) { Text("Enroll or share a contact") } }
         if (peers.isEmpty()) item {
             Notice("No devices reported", "Start discovery on another participating phone. Check permissions and radios if it does not appear.")
         }

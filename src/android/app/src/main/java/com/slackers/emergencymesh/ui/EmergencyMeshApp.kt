@@ -64,8 +64,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,6 +94,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var directSubmission by remember { mutableStateOf(0) }
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
+    var enrollmentOpen by remember { mutableStateOf(false) }
+    var enrolling by remember { mutableStateOf(false) }
+    var enrollmentError by remember { mutableStateOf<String?>(null) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
     var device by remember(services) { mutableStateOf(services?.device) }
     var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
@@ -110,7 +115,6 @@ fun EmergencyMeshApp(services: AppServices? = null) {
 
     fun stopConnection() {
         connectionStartJob?.cancel()
-        connectionStartJob = null
         runCatching { services?.transport?.stop() }
         runCatching { services?.engineLifecycle?.stop?.invoke() }
         discoveryRequested = false
@@ -213,7 +217,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     }
 
     fun startDiscovery() {
-        if (startingConnection || discoveryRequested) return
+        if (startingConnection || discoveryRequested || connectionStartJob?.isCompleted == false) return
         val active = services
         val radioDevice = transportDevice
         if (active == null || radioDevice == null) {
@@ -370,6 +374,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onInspect = { inspectedContact = it },
                     onNearby = { tabName = AppTab.NEARBY.name },
                     onSos = { tabName = AppTab.SOS.name },
+                    onEnroll = { enrollmentError = null; enrollmentOpen = true },
                 )
                 AppTab.NEARBY -> NearbyScreen(
                     peers = peers,
@@ -425,6 +430,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         clipboard.setText(AnnotatedString("${transportDevice?.deviceId.orEmpty()}\n${localFingerprint ?: "Signing fingerprint not available; radio identity only."}"))
                         notifyUser("Device details copied. Pairing alone does not verify signing keys.")
                     },
+                    onEnroll = { enrollmentError = null; enrollmentOpen = true },
                 )
                 AppTab.SOS -> SosScreen(
                     alerts = alerts,
@@ -484,6 +490,48 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             }
         }
     }
+
+    if (enrollmentOpen) ContactEnrollmentDialog(
+        localCard = localCard,
+        localDeviceId = transportDevice?.deviceId,
+        fingerprint = { card -> runCatching { services?.security?.fingerprint(card) }.getOrNull() },
+        canEnroll = services?.repository != null && localCard != null,
+        saving = enrolling,
+        saveError = enrollmentError,
+        onCopy = { publicText ->
+            clipboard.setText(AnnotatedString(publicText))
+            notifyUser("Public contact card copied. Exchange it and compare fingerprints separately.")
+        },
+        onEnroll = { incoming, compared ->
+            val repository = services?.repository
+            val ownId = transportDevice?.deviceId
+            if (repository != null && ownId != null && localCard != null && !enrolling) {
+                enrolling = true
+                enrollmentError = null
+                scope.launch {
+                    try {
+                        val saved = withContext(Dispatchers.IO) {
+                            val existing = withTimeout(5_000) {
+                                repository.contacts.first().firstOrNull { it.deviceId == incoming.deviceId }
+                            }
+                            val card = contactForEnrollment(incoming, existing, ownId, compared)
+                            repository.saveContact(card)
+                            card
+                        }
+                        record("Contact enrolled: ${saved.deviceId}; verified=${saved.verified}")
+                        enrollmentOpen = false
+                        notifyUser(if (saved.verified) "Contact enrolled with fingerprint verification."
+                            else "Contact saved as unverified. Compare fingerprints before messaging.")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        enrollmentError = failure.message ?: "Contact could not be saved."
+                    } finally { enrolling = false }
+                }
+            }
+        },
+        onDismiss = { enrollmentOpen = false },
+    )
 
     inspectedContact?.let { card ->
         var compared by remember(card) { mutableStateOf(false) }

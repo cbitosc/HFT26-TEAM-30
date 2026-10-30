@@ -64,6 +64,7 @@ internal fun ChatsScreen(
     onInspect: (ContactCard) -> Unit,
     onNearby: () -> Unit,
     onSos: () -> Unit,
+    onEnroll: () -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -82,6 +83,7 @@ internal fun ChatsScreen(
             Notice("Incoming SOS", "An emergency alert is available. Open SOS to read it.")
         }
         item { Text("CONTACTS", style = MaterialTheme.typography.labelLarge) }
+        item { OutlinedButton(onClick = onEnroll) { Text("Enroll a contact") } }
         if (contacts.isEmpty()) item {
             Notice("No enrolled contacts", "Find nearby phones and enroll their public contact cards with your team. Verify fingerprints before sending direct messages.")
         }
