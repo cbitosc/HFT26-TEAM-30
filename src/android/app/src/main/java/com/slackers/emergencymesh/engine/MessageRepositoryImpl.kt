@@ -335,6 +335,18 @@ class MessageRepositoryImpl(
         val referencedId = packet.refMessageId ?: return
         dao.acknowledgePacketForPeer(referencedId, packet.senderId, now)
 
+        // Keep the original for intermediate ACKs and other peers; drop it once the
+        // addressed recipient confirms final delivery.
+        if (packet.type == PacketType.ACK_DELIVERED) {
+            val retained = dao.queuedPacket(referencedId)?.let {
+                runCatching { PacketCodec.decode(it.encodedPacket) }.getOrNull()
+            }
+            if (retained?.type == PacketType.MESSAGE && retained.recipientId == packet.senderId) {
+                dao.deleteQueuedPacket(referencedId)
+                dao.pruneOrphanedPeerReceipts()
+            }
+        }
+
         val message = dao.message(referencedId)
         if (message != null && message.outgoing) {
             val newStatus = when (packet.type) {

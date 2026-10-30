@@ -21,6 +21,7 @@ import com.slackers.emergencymesh.transport.InMemoryMesh
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -72,20 +73,25 @@ class RelayEngineInMemoryMeshTest {
             runCurrent()
 
             assertEquals(MessageStatus.DELIVERED.name, daoA.message(messageId)?.status)
+            val statusTimes = requireNotNull(repoA.observeStatusTimes(messageId).first())
+            assertNotNull(statusTimes.sentAtMillis)
+            assertNotNull(statusTimes.relayedAtMillis)
+            assertNotNull(statusTimes.deliveredAtMillis)
             val received = requireNotNull(daoC.message(messageId))
             assertEquals("Relay test", PacketCodec.decodeBody(received.body).text)
+            assertNotNull(received.deliveredAtMillis)
             assertEquals(0, securityB.directDecryptCount)
             assertNull("The relay should not create a displayed-message row", daoB.message(messageId))
 
-            val retained = requireNotNull(daoB.queuedPacket(messageId))
-            assertEquals(Priority.P2_REGULAR.ordinal, retained.priority)
-            assertEquals("A", retained.receivedFromDeviceId)
             assertTrue(
                 mesh.sentLog.any {
                     it.fromDeviceId == "B" && it.toDeviceId == "C" &&
-                        it.packet.id == messageId && it.packet.hopCount == 1 && it.packet.ttl == 4
+                        it.packet.id == messageId && it.packet.priority == Priority.P2_REGULAR &&
+                        it.packet.hopCount == 1 && it.packet.ttl == 4
                 },
             )
+            assertNull("Sender removes the message after final delivery ACK", daoA.queuedPacket(messageId))
+            assertNull("Relay removes the retained message after final delivery ACK", daoB.queuedPacket(messageId))
             assertFalse(
                 "B must not echo A's packet back to A",
                 mesh.sentLog.any {
