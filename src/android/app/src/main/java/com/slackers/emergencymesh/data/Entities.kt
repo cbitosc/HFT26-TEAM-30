@@ -30,6 +30,9 @@ data class MessageEntity(
     val createdAtMillis: Long,
     val status: String,
     val hopCount: Int,
+    val sentAtMillis: Long? = null,
+    val relayedAtMillis: Long? = null,
+    val deliveredAtMillis: Long? = null,
 )
 
 /** Opaque encoded packets are retained so relays never need to decrypt message bodies. */

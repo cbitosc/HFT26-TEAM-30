@@ -367,9 +367,19 @@ class RelayEngineInMemoryMeshTest {
             flowOf(messages.values.filter { it.type == "SOS" }.sortedByDescending { it.createdAtMillis })
 
         override suspend fun message(messageId: String) = messages[messageId]
+        override fun observeMessage(messageId: String): Flow<MessageEntity?> = flowOf(messages[messageId])
         override suspend fun putMessage(message: MessageEntity) { messages[message.messageId] = message }
         override suspend fun updateStatus(messageId: String, status: String) {
             messages[messageId]?.let { messages[messageId] = it.copy(status = status) }
+        }
+        override suspend fun recordSentAt(messageId: String, atMillis: Long) {
+            messages[messageId]?.let { messages[messageId] = it.copy(sentAtMillis = it.sentAtMillis ?: atMillis) }
+        }
+        override suspend fun recordRelayedAt(messageId: String, atMillis: Long) {
+            messages[messageId]?.let { messages[messageId] = it.copy(relayedAtMillis = it.relayedAtMillis ?: atMillis) }
+        }
+        override suspend fun recordDeliveredAt(messageId: String, atMillis: Long) {
+            messages[messageId]?.let { messages[messageId] = it.copy(deliveredAtMillis = it.deliveredAtMillis ?: atMillis) }
         }
         override suspend fun updateHopCount(messageId: String, hopCount: Int) {
             messages[messageId]?.let { messages[messageId] = it.copy(hopCount = maxOf(it.hopCount, hopCount)) }
