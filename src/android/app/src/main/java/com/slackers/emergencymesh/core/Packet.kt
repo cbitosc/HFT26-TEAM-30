@@ -15,7 +15,7 @@ const val MAX_TEXT_CHARS = 2_000
 const val MAX_TTL = 10
 
 enum class PacketType {
-    MESSAGE, SOS, ACK_SENT, ACK_RELAYED, ACK_DELIVERED, SOS_CANCEL, SAFE;
+    MESSAGE, SOS, ACK_SENT, ACK_RELAYED, ACK_DELIVERED, SOS_CANCEL, SAFE, CONTACT_CARD;
 
     val isAck: Boolean
         get() = this == ACK_SENT || this == ACK_RELAYED || this == ACK_DELIVERED
@@ -167,6 +167,37 @@ object PacketCodec {
             )
         } catch (e: EOFException) {
             throw MalformedPacketException("Truncated message body")
+        }
+    }
+
+    /** The verified flag is local, so it is never sent. */
+    fun encodeContactCard(card: ContactCard): ByteArray = write { out ->
+        writeString(out, card.deviceId)
+        writeString(out, card.displayName)
+        writeBytes(out, card.signingPublicKey)
+        writeBytes(out, card.encryptionPublicKey)
+    }
+
+    /** A received card always starts unverified. */
+    fun decodeContactCard(bytes: ByteArray): ContactCard {
+        try {
+            val input = DataInputStream(ByteArrayInputStream(bytes))
+            val card = ContactCard(
+                deviceId = readString(input),
+                displayName = readString(input),
+                signingPublicKey = readBytes(input),
+                encryptionPublicKey = readBytes(input),
+                verified = false,
+            )
+            if (input.available() != 0) throw MalformedPacketException("Trailing contact bytes")
+            if (card.deviceId.isBlank() || card.signingPublicKey.isEmpty() ||
+                card.encryptionPublicKey.isEmpty()
+            ) {
+                throw MalformedPacketException("Incomplete contact card")
+            }
+            return card
+        } catch (e: EOFException) {
+            throw MalformedPacketException("Truncated contact card")
         }
     }
 
