@@ -64,6 +64,7 @@ import com.slackers.emergencymesh.transport.TransportLogEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
@@ -112,6 +113,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
     var device by remember(services) { mutableStateOf(services?.device) }
     var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
+    val sosScanSession = remember(context) { SosScanSessionStore(context) }
+    var activeSosUntil by remember(sosScanSession) { mutableStateOf(sosScanSession.readUntil()) }
+    val sosScanningActive = activeSosUntil > 0L
     var radioProblems by remember(context) { mutableStateOf(RadioReadiness.check(context)) }
     val log = remember { mutableStateListOf<String>() }
 
@@ -129,6 +133,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         connectionStartJob?.cancel()
         runCatching { services?.transport?.stop() }
         runCatching { services?.engineLifecycle?.stop?.invoke() }
+        runCatching { services?.transport?.setDiscoveryMode(DiscoveryMode.BALANCED) }
+        discoveryMode = DiscoveryMode.BALANCED
         discoveryRequested = false
         startingConnection = false
     }
@@ -193,6 +199,26 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         localCard == null -> "Identity unavailable"
         services.security?.isDevelopmentPlaintext == true -> "Development plaintext · not secure"
         else -> "Security provider loaded"
+    }
+
+    // Keep the scan session across recreation/restarts, with an explicit local end and
+    // the same maximum lifetime as an SOS. Failed sends never start a scan session.
+    LaunchedEffect(services, activeSosUntil) {
+        val remaining = activeSosUntil - System.currentTimeMillis()
+        val active = remaining > 0L
+        try {
+            val mode = if (active) DiscoveryMode.CONTINUOUS else DiscoveryMode.BALANCED
+            services?.transport?.setDiscoveryMode(mode)
+            discoveryMode = mode
+        } catch (error: Exception) {
+            record("SOS discovery mode failed: ${error.message}")
+            notifyUser("Could not update SOS scanning. Check Nearby and Debug.")
+        }
+        if (active) delay(remaining)
+        if (activeSosUntil != 0L) {
+            sosScanSession.end()
+            activeSosUntil = 0L
+        }
     }
 
     LaunchedEffect(services) {
@@ -265,7 +291,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         startingConnection = true
         connectionStartJob = scope.launch {
             try {
-                val startRadio = { active.transport.start(radioDevice.deviceId, radioDevice.displayName) }
+                val startRadio = {
+                    val mode = if (activeSosUntil > System.currentTimeMillis())
+                        DiscoveryMode.CONTINUOUS else discoveryMode
+                    active.transport.setDiscoveryMode(mode)
+                    discoveryMode = mode
+                    active.transport.start(radioDevice.deviceId, radioDevice.displayName)
+                }
                 val engine = active.engineLifecycle
                 if (engine != null) {
                     engine.startBeforeTransport(startRadio)
@@ -341,6 +373,26 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (sosScanningActive) {
+                Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(when {
+                            discoveryRequested && discoveryMode == DiscoveryMode.CONTINUOUS ->
+                                "Active SOS · continuous scanning"
+                            discoveryRequested -> "Active SOS · check scanning mode in Nearby"
+                            else -> "Active SOS · start mesh in Nearby for continuous scanning"
+                        },
+                            style = MaterialTheme.typography.titleSmall)
+                        Text("Ending scanning returns to balanced mode. The stored SOS can still be forwarded.",
+                            style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = {
+                            sosScanSession.end()
+                            activeSosUntil = 0L
+                            record("SOS scanning ended; returning to balanced discovery.")
+                        }) { Text("End SOS scanning") }
+                    }
+                }
+            }
             if (keyWarnings.isNotEmpty()) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -430,7 +482,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     },
                     onRecheck = { radioProblems = RadioReadiness.check(context) },
                     onMode = { mode ->
-                        try {
+                        if (activeSosUntil > System.currentTimeMillis() && mode != DiscoveryMode.CONTINUOUS) {
+                            notifyUser("End SOS scanning first to return to balanced mode.")
+                        } else try {
                             services?.transport?.setDiscoveryMode(mode)
                             discoveryMode = mode
                             record("Discovery mode selected: $mode")
@@ -493,6 +547,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                                         locationTimeMillis = location?.time,
                                     )
                                     val id = withContext(Dispatchers.IO) { repository.sendSos(body) }
+                                    activeSosUntil = sosScanSession.begin(System.currentTimeMillis())
                                     record("SOS stored: $id; location ${if (location == null) "unavailable/omitted" else "included"}")
                                     notifyUser("SOS queued${if (location == null) " without location" else " with recent location"}. Delivery is not guaranteed.")
                                 } catch (cancelled: CancellationException) {
