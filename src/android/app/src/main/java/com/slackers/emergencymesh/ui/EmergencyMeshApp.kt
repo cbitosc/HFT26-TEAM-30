@@ -47,11 +47,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
+import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.PeerInfo
 import com.slackers.emergencymesh.core.PeerState
 import com.slackers.emergencymesh.core.Priority
 import com.slackers.emergencymesh.core.TransportEvent
+import com.slackers.emergencymesh.transport.LocalDevice
+import com.slackers.emergencymesh.transport.LocalDeviceStore
+import com.slackers.emergencymesh.transport.RadioProblem
+import com.slackers.emergencymesh.transport.RadioReadiness
+import com.slackers.emergencymesh.transport.TransportLogEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
@@ -84,6 +90,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
+    var device by remember(services) { mutableStateOf(services?.device) }
+    var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
+    var radioProblems by remember(context) { mutableStateOf(RadioReadiness.check(context)) }
     val log = remember { mutableStateListOf<String>() }
 
     fun record(message: String) {
@@ -104,23 +113,33 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         localCard?.let { card -> runCatching { services?.security?.fingerprint(card) }.getOrNull() }
     }
     val identityError = localIdentityResult.exceptionOrNull()?.message
+    val transportDevice = localCard?.let { LocalDevice(it.deviceId, it.displayName) } ?: device
+    val canMessage = services?.repository != null && localCard != null
+    val storageLabel = when {
+        services?.repository != null -> "Message repository attached"
+        services?.storedMessages != null -> "Room attached · read only"
+        else -> "Storage not connected"
+    }
 
     val contactsFlow = remember(services) {
-        (services?.repository?.contacts ?: flowOf(emptyList<ContactCard>())).catch { error ->
+        (services?.repository?.contacts ?: services?.storedMessages?.contacts
+            ?: flowOf(emptyList<ContactCard>())).catch { error ->
             record("Contact storage failed: ${error.message ?: "unknown error"}")
             notifyUser("Could not load contacts. Check Debug.")
             emit(emptyList())
         }
     }
     val alertsFlow = remember(services) {
-        (services?.repository?.sosAlerts ?: flowOf(emptyList<ChatMessage>())).catch { error ->
+        (services?.repository?.sosAlerts ?: services?.storedMessages?.sosAlerts
+            ?: flowOf(emptyList<ChatMessage>())).catch { error ->
             record("SOS storage failed: ${error.message ?: "unknown error"}")
             notifyUser("Could not load SOS alerts. Check Debug.")
             emit(emptyList())
         }
     }
     val conversationFlow = remember(services, conversationId) {
-        (conversationId?.let { services?.repository?.conversation(it) }
+        (conversationId?.let { services?.repository?.conversation(it)
+            ?: services?.storedMessages?.conversation(it) }
             ?: flowOf(emptyList<ChatMessage>())).catch { error ->
             record("Conversation storage failed: ${error.message ?: "unknown error"}")
             notifyUser("Could not load this conversation. Check Debug.")
@@ -132,16 +151,20 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val messages by conversationFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val peersFlow = remember(services) { services?.transport?.peers ?: flowOf(emptyList<PeerInfo>()) }
     val peers by peersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val radioLogFlow = remember(services) { services?.radioLog ?: flowOf(emptyList<TransportLogEntry>()) }
+    val radioEntries by radioLogFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val connected = peers.count { it.state == PeerState.CONNECTED }
     val securityLabel = when {
         services == null -> "Services not connected"
+        services.security == null -> "Radio setup only · encryption not connected"
         localCard == null -> "Identity unavailable"
-        services.security.isDevelopmentPlaintext -> "Development plaintext · not secure"
+        services.security?.isDevelopmentPlaintext == true -> "Development plaintext · not secure"
         else -> "Security provider loaded"
     }
 
     LaunchedEffect(services) {
-        record(if (services == null) "UI ready; real services not wired." else "Real services supplied.")
+        record(if (services == null) "UI ready; real services not wired."
+            else "Real transport supplied. $storageLabel.")
         services?.transport?.events?.collect { event ->
             when (event) {
                 is TransportEvent.PeerConnected -> record("Connected: ${event.peer.deviceId}")
@@ -153,6 +176,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     "Rejected data from ${event.fromEndpointId}: ${event.reason}"
                 )
                 is TransportEvent.Failure -> {
+                    runCatching { services?.transport?.stop() }
                     discoveryRequested = false
                     record("Transport failure: ${event.reason}")
                     notifyUser(event.reason)
@@ -165,6 +189,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     // and require the user to start it again on returning to the app.
     DisposableEffect(services, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) radioProblems = RadioReadiness.check(context)
             if (event == Lifecycle.Event.ON_STOP) {
                 runCatching { services?.transport?.stop() }
                 discoveryRequested = false
@@ -179,20 +204,29 @@ fun EmergencyMeshApp(services: AppServices? = null) {
 
     fun startDiscovery() {
         val active = services
-        val card = localCard
-        if (active == null || card == null) {
-            notifyUser("A real transport and local identity must be wired first.")
+        val radioDevice = transportDevice
+        if (active == null || radioDevice == null) {
+            notifyUser("A real transport and device ID must be wired first.")
             return
         }
+        if (active.security != null && localCard == null) {
+            notifyUser("The security identity could not be loaded. Check Debug before starting.")
+            return
+        }
+        radioProblems = RadioReadiness.check(context)
         if (missingNearbyPermissions(context).isNotEmpty()) {
             permissionFeedback = "Nearby access is incomplete. Allow the requested permissions or open App settings."
             return
         }
+        if (radioProblems.any { it is RadioProblem.PlayServicesUnavailable }) {
+            permissionFeedback = "Google Play services must be available before starting discovery."
+            return
+        }
         try {
-            active.transport.start(card.deviceId, card.displayName)
+            active.transport.start(radioDevice.deviceId, radioDevice.displayName)
             discoveryRequested = true
             permissionFeedback = null
-            record("Discovery requested. Keep Wi-Fi and Bluetooth on.")
+            record("Discovery requested as ${radioDevice.deviceId}. No message engine is started by the UI.")
         } catch (error: Exception) {
             record("Start failed: ${error.message}")
             notifyUser("Could not start discovery. Check Debug.")
@@ -252,10 +286,11 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (services == null || localCard == null) {
+            if (!canMessage) {
                 Notice(
-                    "Integration pending",
-                    identityError ?: "Screens are ready. Real transport, storage and security are not wired yet. No messages will be sent.",
+                    if (services == null) "Integration pending" else "Connections ready · messaging pending",
+                    identityError ?: if (services == null) "No services are wired. No messages will be sent."
+                    else "$storageLabel. Nearby pairing is available. Message engine and security must be connected before sending.",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
@@ -266,19 +301,20 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     contact = contact,
                     deviceId = currentId,
                     messages = messages,
-                    canSend = services != null && localCard != null && contact?.verified == true,
+                    canSend = canMessage && contact?.verified == true,
                     sending = sendingDirect,
                     submission = if (submittedConversationId == currentId) directSubmission else 0,
                     onBack = { conversationId = null },
                     onInspect = { inspectedContact = contact },
                     onSend = { text, priority ->
                         val active = services
-                        if (active != null && !sendingDirect && contact?.verified == true) {
+                        val repository = active?.repository
+                        if (repository != null && canMessage && !sendingDirect && contact?.verified == true) {
                             sendingDirect = true
                             scope.launch {
                                 try {
                                     val messageId = withContext(Dispatchers.IO) {
-                                        active.repository.sendDirect(currentId, text.trim(), priority)
+                                        repository.sendDirect(currentId, text.trim(), priority)
                                     }
                                     record("Direct message stored: $messageId")
                                     submittedConversationId = currentId
@@ -307,11 +343,33 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 )
                 AppTab.NEARBY -> NearbyScreen(
                     peers = peers,
-                    localCard = localCard,
+                    localDevice = transportDevice,
                     fingerprint = localFingerprint,
                     discoveryRequested = discoveryRequested,
-                    canStart = services != null && localCard != null,
+                    canStart = services != null && transportDevice != null &&
+                        (services.security == null || localCard != null),
                     permissionFeedback = permissionFeedback,
+                    radioProblems = radioProblems.map(::radioProblemLabel),
+                    discoveryMode = discoveryMode,
+                    canRename = services != null && services.security == null && !discoveryRequested,
+                    onRename = { name ->
+                        val current = device
+                        if (current != null && name.isNotBlank() && services?.security == null && !discoveryRequested) {
+                            LocalDeviceStore.saveDisplayName(context, name.trim())
+                            device = current.copy(displayName = name.trim())
+                            record("Display name saved.")
+                        }
+                    },
+                    onRecheck = { radioProblems = RadioReadiness.check(context) },
+                    onMode = { mode ->
+                        try {
+                            services?.transport?.setDiscoveryMode(mode)
+                            discoveryMode = mode
+                            record("Discovery mode selected: $mode")
+                        } catch (error: Exception) {
+                            notifyUser("Could not change discovery mode: ${error.message}")
+                        }
+                    },
                     onStart = {
                         if (missingNearbyPermissions(context).isEmpty()) startDiscovery()
                         else nearbyPermissionRequest.launch(nearbyPermissions().toTypedArray())
@@ -338,21 +396,22 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                             Uri.parse("package:${context.packageName}")))
                     },
                     onCopyIdentity = {
-                        clipboard.setText(AnnotatedString("${localCard?.deviceId.orEmpty()}\n${localFingerprint.orEmpty()}"))
-                        notifyUser("Device ID and fingerprint copied. Public keys are enrolled separately.")
+                        clipboard.setText(AnnotatedString("${transportDevice?.deviceId.orEmpty()}\n${localFingerprint ?: "Signing fingerprint not available; radio identity only."}"))
+                        notifyUser("Device details copied. Pairing alone does not verify signing keys.")
                     },
                 )
                 AppTab.SOS -> SosScreen(
                     alerts = alerts,
                     sending = sendingSos,
-                    canSend = services != null && localCard != null,
+                    canSend = canMessage,
                     onRequestLocation = {
                         sosLocationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
                             Manifest.permission.ACCESS_FINE_LOCATION))
                     },
                     onSend = { text, includeLocation ->
                         val active = services
-                        if (active != null && !sendingSos) {
+                        val repository = active?.repository
+                        if (repository != null && canMessage && !sendingSos) {
                             sendingSos = true
                             scope.launch {
                                 try {
@@ -366,7 +425,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                                         accuracyMeters = location?.takeIf { it.hasAccuracy() }?.accuracy,
                                         locationTimeMillis = location?.time,
                                     )
-                                    val id = withContext(Dispatchers.IO) { active.repository.sendSos(body) }
+                                    val id = withContext(Dispatchers.IO) { repository.sendSos(body) }
                                     record("SOS stored: $id; location ${if (location == null) "unavailable/omitted" else "included"}")
                                     notifyUser("SOS queued${if (location == null) " without location" else " with recent location"}. Delivery is not guaranteed.")
                                 } catch (cancelled: CancellationException) {
@@ -385,9 +444,14 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     logs = log.toList(),
                     connectedCount = connected,
                     securityLabel = securityLabel,
+                    storageLabel = storageLabel,
+                    radioLog = radioEntries.map { entry ->
+                        "${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(entry.timeMillis))}  ${entry.message}"
+                    },
                     onClear = { log.clear() },
                     onCopy = {
-                        clipboard.setText(AnnotatedString(log.joinToString("\n")))
+                        val radioText = radioEntries.joinToString("\n") { "${it.timeMillis}  ${it.message}" }
+                        clipboard.setText(AnnotatedString("APP EVENTS\n${log.joinToString("\n")}\n\nRADIO\n$radioText"))
                         notifyUser("Debug log copied. Message bodies and private keys are not logged here.")
                     },
                 )
@@ -418,14 +482,15 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             confirmButton = {
                 if (card.verified) TextButton(onClick = { inspectedContact = null }) { Text("Done") }
                 else Button(
-                    enabled = compared && !fingerprint.isNullOrBlank() && !saving,
+                    enabled = compared && !fingerprint.isNullOrBlank() && !saving && services?.repository != null,
                     onClick = {
                         val active = services
-                        if (active != null) {
+                        val repository = active?.repository
+                        if (repository != null) {
                             saving = true
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { active.repository.saveContact(card.copy(verified = true)) }
+                                    withContext(Dispatchers.IO) { repository.saveContact(card.copy(verified = true)) }
                                     record("Contact verified by user: ${card.deviceId}")
                                     inspectedContact = null
                                 } catch (cancelled: CancellationException) {

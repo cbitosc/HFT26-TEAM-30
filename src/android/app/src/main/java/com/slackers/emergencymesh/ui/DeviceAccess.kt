@@ -5,24 +5,20 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
-import android.os.Build
 import androidx.core.content.ContextCompat
+import com.slackers.emergencymesh.transport.RadioProblem
+import com.slackers.emergencymesh.transport.RadioReadiness
 import java.util.concurrent.TimeUnit
 
-/** These permissions already exist in M1's manifest. No manifest edits are needed. */
-internal fun nearbyPermissions(): List<String> = buildList {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        add(Manifest.permission.BLUETOOTH_SCAN)
-        add(Manifest.permission.BLUETOOTH_CONNECT)
-        add(Manifest.permission.BLUETOOTH_ADVERTISE)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        add(Manifest.permission.NEARBY_WIFI_DEVICES)
-    }
-    // M1 declares SCAN without neverForLocation; request location for that setup.
-    // Android 12+ expects COARSE and FINE to be requested together.
-    add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    add(Manifest.permission.ACCESS_FINE_LOCATION)
+/** M1 owns this policy and the manifest. Keep one source of truth for discovery. */
+internal fun nearbyPermissions(): List<String> = RadioReadiness.requiredPermissions()
+
+internal fun radioProblemLabel(problem: RadioProblem): String = when (problem) {
+    is RadioProblem.MissingPermissions -> "Nearby access: ${problem.permissions.size} permissions missing."
+    is RadioProblem.PlayServicesUnavailable -> "Google Play services is unavailable (code ${problem.code})."
+    RadioProblem.BluetoothOff -> "Bluetooth is off. Turn it on for nearby connections."
+    RadioProblem.WifiOff -> "Wi-Fi is off. Bluetooth-only connections may still work; Wi-Fi can improve available links."
+    RadioProblem.LocationOff -> "Device location is off. Older Android versions need it for discovery."
 }
 
 internal fun hasPermission(context: Context, permission: String): Boolean =

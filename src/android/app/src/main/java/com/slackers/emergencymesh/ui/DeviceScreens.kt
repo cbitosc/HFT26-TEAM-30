@@ -14,8 +14,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,18 +27,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.slackers.emergencymesh.core.ContactCard
+import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.PeerInfo
 import com.slackers.emergencymesh.core.PeerState
+import com.slackers.emergencymesh.transport.LocalDevice
 
 @Composable
 internal fun NearbyScreen(
     peers: List<PeerInfo>,
-    localCard: ContactCard?,
+    localDevice: LocalDevice?,
     fingerprint: String?,
     discoveryRequested: Boolean,
     canStart: Boolean,
     permissionFeedback: String?,
+    radioProblems: List<String>,
+    discoveryMode: DiscoveryMode,
+    canRename: Boolean,
+    onRename: (String) -> Unit,
+    onRecheck: () -> Unit,
+    onMode: (DiscoveryMode) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRespond: (PeerInfo, Boolean) -> Unit,
@@ -44,6 +53,9 @@ internal fun NearbyScreen(
     onCopyIdentity: () -> Unit,
 ) {
     var pairingEndpoint by remember { mutableStateOf<String?>(null) }
+    var name by remember(localDevice?.deviceId, localDevice?.displayName) {
+        mutableStateOf(localDevice?.displayName.orEmpty())
+    }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -52,13 +64,28 @@ internal fun NearbyScreen(
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(localCard?.displayName ?: "Local identity not connected", style = MaterialTheme.typography.titleMedium)
-                    Text("Device ID: ${localCard?.deviceId ?: "Unavailable"}", style = MaterialTheme.typography.bodySmall)
-                    Text("Fingerprint: ${fingerprint ?: "Unavailable"}", style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = onCopyIdentity, enabled = localCard != null && fingerprint != null) {
-                        Text("Copy ID and fingerprint")
+                    Text(localDevice?.displayName ?: "Local device not connected", style = MaterialTheme.typography.titleMedium)
+                    Text("Device ID: ${localDevice?.deviceId ?: "Unavailable"}", style = MaterialTheme.typography.bodySmall)
+                    Text("Signing fingerprint: ${fingerprint ?: "Not enrolled. This ID identifies the radio only."}", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onCopyIdentity, enabled = localDevice != null) {
+                        Text("Copy device details")
                     }
                 }
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { if (it.length <= 32) name = it },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = canRename,
+                singleLine = true,
+                label = { Text("Phone name (for example A, B or C)") },
+                supportingText = { Text("Stop discovery before renaming. Signing identities are managed during enrollment.") },
+            )
+            TextButton(onClick = { onRename(name) },
+                enabled = canRename && name.isNotBlank() && name.trim() != localDevice?.displayName) {
+                Text("Save phone name")
             }
         }
         item {
@@ -72,6 +99,23 @@ internal fun NearbyScreen(
                 else "Discovery not requested from this screen.",
                 style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onSettings) { Text("App permissions and settings") }
+            TextButton(onClick = onRecheck) { Text("Recheck device readiness") }
+        }
+        items(radioProblems) { problem -> Notice("Device readiness", problem) }
+        item {
+            Text("DISCOVERY MODE", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DiscoveryMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = discoveryMode == mode,
+                        onClick = { onMode(mode) },
+                        enabled = canStart,
+                        label = { Text(if (mode == DiscoveryMode.BALANCED) "Balanced" else "Continuous") },
+                    )
+                }
+            }
+            Text("Balanced scans in bursts. Continuous keeps scanning; the engine will manage SOS mode when integrated.",
+                style = MaterialTheme.typography.bodySmall)
         }
         permissionFeedback?.let { feedback -> item { Notice("Permission required", feedback) } }
         item { Notice("Before pairing", "Both people compare the connection token on their phones. Pair only if it matches. Contact-key enrollment is a separate step before direct messaging.") }
@@ -132,6 +176,8 @@ internal fun DebugScreen(
     logs: List<String>,
     connectedCount: Int,
     securityLabel: String,
+    storageLabel: String,
+    radioLog: List<String>,
     onClear: () -> Unit,
     onCopy: () -> Unit,
 ) {
@@ -140,16 +186,21 @@ internal fun DebugScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { SectionHeading("Debug log", "This session only · latest 200 events") }
-        item { Notice("Current wiring", "$securityLabel\n$connectedCount connected peers reported by the transport.") }
+        item { Notice("Current wiring", "$securityLabel\n$storageLabel\n$connectedCount connected peers reported by the transport.") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onCopy, enabled = logs.isNotEmpty()) { Text("Copy log") }
-                OutlinedButton(onClick = onClear, enabled = logs.isNotEmpty()) { Text("Clear screen log") }
+                Button(onClick = onCopy, enabled = logs.isNotEmpty() || radioLog.isNotEmpty()) { Text("Copy logs") }
+                OutlinedButton(onClick = onClear, enabled = logs.isNotEmpty()) { Text("Clear app log") }
             }
         }
-        item { Text("Clearing this screen does not delete messages, keys or the durable queue.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Clear app log affects this session's UI events only. Radio history, messages, keys and the durable queue remain.", style = MaterialTheme.typography.bodySmall) }
         if (logs.isEmpty()) item { Text("No events in this session.") }
         items(logs.asReversed()) { entry ->
+            Text(entry, style = MaterialTheme.typography.bodySmall)
+        }
+        item { Text("RADIO HISTORY", style = MaterialTheme.typography.labelLarge) }
+        if (radioLog.isEmpty()) item { Text("No radio events reported yet.") }
+        items(radioLog.asReversed()) { entry ->
             Text(entry, style = MaterialTheme.typography.bodySmall)
         }
         item { Spacer(Modifier.height(16.dp)) }
