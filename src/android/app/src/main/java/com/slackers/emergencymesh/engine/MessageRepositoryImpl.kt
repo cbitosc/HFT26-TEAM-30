@@ -73,7 +73,7 @@ class MessageRepositoryImpl(
         eventJob = workers().launch(start = CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
                 when (event) {
-                    is TransportEvent.PeerConnected -> dispatchTo(event.peer)
+                    is TransportEvent.PeerConnected -> workers().launch { dispatchTo(event.peer) }
                     is TransportEvent.PacketReceived -> handleIncoming(event.fromEndpointId, event.packet)
                     else -> Unit
                 }
@@ -203,29 +203,38 @@ class MessageRepositoryImpl(
                 val queued = dao.dueOutgoingForPeer(peer.deviceId, now, limit = 1).firstOrNull() ?: break
                 val prior = dao.receipt(queued.packetId, peer.deviceId)
                 val attempt = (prior?.attemptCount ?: 0) + 1
-                dao.putPeerReceipt(
-                    com.slackers.emergencymesh.data.PeerReceiptEntity(
-                        packetId = queued.packetId,
-                        peerDeviceId = peer.deviceId,
-                        acknowledgedAtMillis = null,
-                        attemptCount = attempt,
-                        nextAttemptAtMillis = now + retryDelayMillis(attempt),
-                    ),
+                val inFlightReceipt = com.slackers.emergencymesh.data.PeerReceiptEntity(
+                    packetId = queued.packetId,
+                    peerDeviceId = peer.deviceId,
+                    acknowledgedAtMillis = null,
+                    attemptCount = attempt,
+                    nextAttemptAtMillis = now + retryDelayMillis(attempt),
                 )
+                dao.putPeerReceipt(inFlightReceipt)
                 val packet = runCatching { PacketCodec.decode(queued.encodedPacket) }.getOrNull()
                 if (packet == null) {
                     dao.deleteQueuedPacket(queued.packetId)
                     continue
                 }
-                transport.send(peer.endpointId, packet)
+                val sendResult = transport.send(peer.endpointId, packet)
                 dispatched++
-                // A transport-complete result is deliberately not an application receipt.
-                workers().launch {
-                    delay(retryDelayMillis(attempt))
-                    val reconnectedPeer = transport.peers.value.firstOrNull {
-                        it.deviceId == peer.deviceId && it.state == PeerState.CONNECTED
+                // ACK packets have no app-level ACK of their own. A successful byte transfer is
+                // therefore terminal for this immediate peer; failed sends get at most three tries.
+                val terminalAck = packet.type.isAck &&
+                    (sendResult == SendResult.TransportComplete || attempt >= MAX_ACK_ATTEMPTS)
+                if (terminalAck) {
+                    dao.putPeerReceipt(inFlightReceipt.copy(acknowledgedAtMillis = nowMillis()))
+                }
+                if (!terminalAck) {
+                    // A transport-complete result for ordinary messages is deliberately not an
+                    // application receipt; those remain retryable until the signed ACK arrives.
+                    workers().launch {
+                        delay(retryDelayMillis(attempt))
+                        val reconnectedPeer = transport.peers.value.firstOrNull {
+                            it.deviceId == peer.deviceId && it.state == PeerState.CONNECTED
+                        }
+                        if (reconnectedPeer != null) dispatchTo(reconnectedPeer)
                     }
-                    if (reconnectedPeer != null) dispatchTo(reconnectedPeer)
                 }
             }
         }
@@ -480,6 +489,7 @@ class MessageRepositoryImpl(
 
     private companion object {
         const val DISPATCH_BATCH_SIZE = 32
+        const val MAX_ACK_ATTEMPTS = 3
         const val INITIAL_RETRY_MS = 1_000L
         const val MAX_RETRY_MS = 60_000L
         const val MAX_BACKOFF_SHIFT = 6

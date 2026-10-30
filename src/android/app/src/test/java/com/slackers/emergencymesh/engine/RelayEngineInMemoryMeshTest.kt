@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -175,6 +176,119 @@ class RelayEngineInMemoryMeshTest {
         }
     }
 
+    @Test
+    fun ackPacketsStopRetryingAfterSuccessfulTransfer() = runTest {
+        val mesh = InMemoryMesh()
+        val transportA = mesh.phone("A")
+        val transportB = mesh.phone("B")
+        mesh.link("A", "B")
+
+        val cardA = contact("A")
+        val cardB = contact("B")
+        val daoB = InMemoryEmergencyMeshDao()
+        val repoA = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), transportA, TestMessageSecurity(cardA), this)
+        val repoB = MessageRepositoryImpl(daoB, transportB, TestMessageSecurity(cardB), this)
+
+        try {
+            repoA.startAndAwaitReady()
+            repoB.startAndAwaitReady()
+            repoA.saveContact(cardB)
+            repoB.saveContact(cardA)
+            val messageId = repoA.sendDirect("B", "ack receipt test", Priority.P2_REGULAR)
+            runCurrent()
+
+            val ack = daoB.queuedPackets()
+                .mapNotNull { runCatching { PacketCodec.decode(it.encodedPacket) }.getOrNull() }
+                .first { it.type == PacketType.ACK_SENT && it.refMessageId == messageId }
+            assertNotNull(daoB.receipt(ack.id, "A")?.acknowledgedAtMillis)
+            assertEquals(
+                emptyList<QueuedPacketEntity>(),
+                daoB.dueOutgoingForPeer("A", daoB.queuedPacket(ack.id)!!.expiresAtMillis - 1L, 32)
+                    .filter { it.packetId == ack.id },
+            )
+            assertEquals(1, mesh.sentLog.count { it.fromDeviceId == "B" && it.toDeviceId == "A" && it.packet.id == ack.id })
+        } finally {
+            repoA.stop()
+            repoB.stop()
+        }
+    }
+
+    @Test
+    fun failedAckTransfersStopAfterThreeAttempts() = runTest {
+        val mesh = InMemoryMesh()
+        val transportA = mesh.phone("A")
+        val underlyingB = mesh.phone("B")
+        mesh.link("A", "B")
+
+        val cardA = contact("A")
+        val cardB = contact("B")
+        val daoB = InMemoryEmergencyMeshDao()
+        val failingTransportB = FailAckTransport(underlyingB)
+        val nowMillis = { 1_000L + testScheduler.currentTime }
+        val repoA = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), transportA, TestMessageSecurity(cardA), this, nowMillis)
+        val repoB = MessageRepositoryImpl(daoB, failingTransportB, TestMessageSecurity(cardB), this, nowMillis)
+
+        try {
+            repoA.startAndAwaitReady()
+            repoB.startAndAwaitReady()
+            repoA.saveContact(cardB)
+            repoB.saveContact(cardA)
+            repoA.sendDirect("B", "bounded ack retry test", Priority.P2_REGULAR)
+            runCurrent()
+            advanceTimeBy(10_000L)
+            runCurrent()
+
+            val acknowledgements = daoB.queuedPackets()
+                .mapNotNull { runCatching { PacketCodec.decode(it.encodedPacket) }.getOrNull() }
+                .filter { it.type.isAck && it.recipientId == "A" }
+            assertTrue(acknowledgements.isNotEmpty())
+            for (ack in acknowledgements) {
+                assertEquals(3, failingTransportB.attemptsByPacket[ack.id])
+                val receipt = requireNotNull(daoB.receipt(ack.id, "A"))
+                assertEquals(3, receipt.attemptCount)
+                assertNotNull(receipt.acknowledgedAtMillis)
+            }
+        } finally {
+            repoA.stop()
+            repoB.stop()
+        }
+    }
+
+    @Test
+    fun incomingPacketIsHandledWhilePeerDispatchIsWaitingOnSlowSend() = runTest {
+        val mesh = InMemoryMesh()
+        val underlyingA = mesh.phone("A")
+        val transportB = mesh.phone("B")
+        val cardA = contact("A")
+        val cardB = contact("B")
+        val daoA = InMemoryEmergencyMeshDao()
+        val gatedTransportA = PauseFirstSendTransport(underlyingA)
+        val repoA = MessageRepositoryImpl(daoA, gatedTransportA, TestMessageSecurity(cardA), this)
+        val repoB = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), transportB, TestMessageSecurity(cardB), this)
+
+        try {
+            repoA.startAndAwaitReady()
+            repoB.startAndAwaitReady()
+            repoA.saveContact(cardB)
+            repoB.saveContact(cardA)
+            repoA.sendDirect("B", "outgoing backlog", Priority.P2_REGULAR)
+            mesh.link("A", "B")
+            runCurrent()
+            assertTrue(gatedTransportA.firstSendStarted.isCompleted)
+
+            val incomingId = repoB.sendDirect("A", "arrives during slow send", Priority.P2_REGULAR)
+            runCurrent()
+            assertEquals("B", daoA.message(incomingId)?.senderId)
+
+            gatedTransportA.releaseFirstSend.complete(Unit)
+            runCurrent()
+        } finally {
+            if (!gatedTransportA.releaseFirstSend.isCompleted) gatedTransportA.releaseFirstSend.complete(Unit)
+            repoA.stop()
+            repoB.stop()
+        }
+    }
+
     private fun contact(id: String) = ContactCard(
         deviceId = id,
         displayName = id,
@@ -215,6 +329,20 @@ class RelayEngineInMemoryMeshTest {
                 hasPaused = true
                 firstSendStarted.complete(Unit)
                 releaseFirstSend.await()
+            }
+            return delegate.send(endpointId, packet)
+        }
+    }
+
+    private class FailAckTransport(
+        private val delegate: MeshTransport,
+    ) : MeshTransport by delegate {
+        val attemptsByPacket = mutableMapOf<String, Int>()
+
+        override suspend fun send(endpointId: String, packet: com.slackers.emergencymesh.core.Packet): SendResult {
+            if (packet.type.isAck) {
+                attemptsByPacket[packet.id] = (attemptsByPacket[packet.id] ?: 0) + 1
+                return SendResult.Failed("Simulated ACK transfer failure")
             }
             return delegate.send(endpointId, packet)
         }
@@ -264,6 +392,7 @@ class RelayEngineInMemoryMeshTest {
             .toList()
 
         override suspend fun queuedPacket(packetId: String) = packets[packetId]
+        fun queuedPackets() = packets.values.toList()
         override suspend fun putQueuedPacket(packet: QueuedPacketEntity) { packets[packet.packetId] = packet }
         override suspend fun deleteQueuedPacket(packetId: String) { packets.remove(packetId) }
         override suspend fun pruneExpiredPackets(nowMillis: Long) {
