@@ -25,7 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 internal fun topologyIds(text: String, localDeviceId: String?): Set<String> {
-    val ids = text.split(Regex("[\\s,]+")) .filter { it.isNotBlank() }.toSet()
+    val ids = text.split(Regex("[\\s,]+" )).filter { it.isNotBlank() }.toSet()
     require(ids.size <= 64) { "Use at most 64 device IDs." }
     require(ids.all { it.matches(Regex("[A-Za-z0-9._:-]{1,128}")) }) { "Paste stable device IDs, separated by spaces or commas." }
     require(localDeviceId !in ids) { "Select other phones, not this phone's own ID." }

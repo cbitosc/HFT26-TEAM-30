@@ -416,7 +416,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     },
                     onStop = {
                         stopConnection()
-                        record("Engine and transport stopped by user.")
+                        record("Connection stopped by user.")
                     },
                     onRespond = { peer, accept ->
                         try {
@@ -568,6 +568,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     inspectedContact?.let { card ->
         var compared by remember(card) { mutableStateOf(false) }
         var saving by remember(card) { mutableStateOf(false) }
+        var verificationError by remember(card) { mutableStateOf<String?>(null) }
         val fingerprint = remember(card, services) {
             runCatching { services?.security?.fingerprint(card) }.getOrNull()
         }
@@ -583,6 +584,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         Checkbox(checked = compared, onCheckedChange = { compared = it })
                         Text("I compared the fingerprints and they match.", Modifier.padding(top = 8.dp))
                     } else Text("This contact is already marked verified.")
+                    verificationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
             confirmButton = {
@@ -592,17 +594,25 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onClick = {
                         val active = services
                         val repository = active?.repository
-                        if (repository != null) {
+                        val ownId = transportDevice?.deviceId
+                        if (repository != null && ownId != null) {
                             saving = true
+                            verificationError = null
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { repository.saveContact(card.copy(verified = true)) }
+                                    withContext(Dispatchers.IO) {
+                                        val latest = withTimeoutOrNull(5_000) { repository.contacts.first() }
+                                            ?: throw IllegalStateException("Contact storage did not respond.")
+                                        val existing = latest.firstOrNull { it.deviceId == card.deviceId }
+                                            ?: throw IllegalStateException("This contact was removed. Enroll it again.")
+                                        repository.saveContact(contactForEnrollment(card, existing, ownId, true))
+                                    }
                                     record("Contact verified by user: ${card.deviceId}")
                                     inspectedContact = null
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    notifyUser("Could not save contact verification: ${error.message}")
+                                    verificationError = error.message ?: "Could not save contact verification."
                                 } finally { saving = false }
                             }
                         }
