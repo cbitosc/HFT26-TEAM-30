@@ -18,4 +18,5 @@ data class AppServices(
     val storedMessages: StoredMessages? = null,
     val radioLog: StateFlow<List<TransportLogEntry>>? = null,
     val readDebugAllowlist: () -> Set<String>? = { null },
+    val initializationError: String? = null,
 )

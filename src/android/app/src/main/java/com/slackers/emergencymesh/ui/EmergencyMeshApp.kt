@@ -97,6 +97,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var enrollmentOpen by remember { mutableStateOf(false) }
     var enrolling by remember { mutableStateOf(false) }
     var enrollmentError by remember { mutableStateOf<String?>(null) }
+    var groupCodeOpen by remember { mutableStateOf(false) }
+    var savingGroupCode by remember { mutableStateOf(false) }
+    var groupCodeError by remember { mutableStateOf<String?>(null) }
+    var hasGroupKey by remember(services) { mutableStateOf(services?.security?.hasGroupKey == true) }
     val debugTools = remember(context) { isDebugBuild(context) }
     var topologyOpen by remember { mutableStateOf(false) }
     var topologyError by remember { mutableStateOf<String?>(null) }
@@ -132,7 +136,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val localFingerprint = remember(services, localCard) {
         localCard?.let { card -> runCatching { services?.security?.fingerprint(card) }.getOrNull() }
     }
-    val identityError = localIdentityResult.exceptionOrNull()?.message
+    val identityError = services?.initializationError ?: localIdentityResult.exceptionOrNull()?.message
     val transportDevice = localCard?.let { LocalDevice(it.deviceId, it.displayName) } ?: device
     val canMessage = services?.repository != null && localCard != null && services.engineLifecycle != null
     val storageLabel = when {
@@ -176,6 +180,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val connected = peers.count { it.state == PeerState.CONNECTED }
     val securityLabel = when {
         services == null -> "Services not connected"
+        services.initializationError != null -> "Secure identity unavailable"
         services.security == null -> "Radio setup only · encryption not connected"
         localCard == null -> "Identity unavailable"
         services.security?.isDevelopmentPlaintext == true -> "Development plaintext · not secure"
@@ -226,6 +231,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         val radioDevice = transportDevice
         if (active == null || radioDevice == null) {
             notifyUser("A real transport and device ID must be wired first.")
+            return
+        }
+        if (active.initializationError != null) {
+            notifyUser(active.initializationError)
             return
         }
         if (active.security != null && localCard == null) {
@@ -387,6 +396,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     discoveryRequested = discoveryRequested,
                     startingConnection = startingConnection,
                     canStart = services != null && transportDevice != null &&
+                        services.initializationError == null &&
                         (services.security == null || localCard != null),
                     permissionFeedback = permissionFeedback,
                     radioProblems = radioProblems.map(::radioProblemLabel),
@@ -439,7 +449,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 AppTab.SOS -> SosScreen(
                     alerts = alerts,
                     sending = sendingSos,
-                    canSend = canMessage,
+                    canSend = canMessage && hasGroupKey,
+                    groupConfigured = hasGroupKey,
+                    canConfigureGroup = services?.security != null,
+                    onConfigureGroup = { groupCodeError = null; groupCodeOpen = true },
                     onRequestLocation = {
                         sosLocationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
                             Manifest.permission.ACCESS_FINE_LOCATION))
@@ -447,7 +460,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     onSend = { text, includeLocation ->
                         val active = services
                         val repository = active?.repository
-                        if (repository != null && canMessage && !sendingSos) {
+                        if (repository != null && canMessage && hasGroupKey && !sendingSos) {
                             sendingSos = true
                             scope.launch {
                                 try {
@@ -509,6 +522,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         canEnroll = services?.repository != null && localCard != null,
         saving = enrolling,
         saveError = enrollmentError,
+        groupConfigured = hasGroupKey,
+        canConfigureGroup = services?.security != null,
+        onConfigureGroup = {
+            enrollmentOpen = false
+            groupCodeError = null
+            groupCodeOpen = true
+        },
         onCopy = { publicText ->
             clipboard.setText(AnnotatedString(publicText))
             notifyUser("Public contact card copied. Exchange it and compare fingerprints separately.")
@@ -542,6 +562,34 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             }
         },
         onDismiss = { enrollmentOpen = false },
+    )
+
+    if (groupCodeOpen && services?.security != null) GroupCodeDialog(
+        configured = hasGroupKey,
+        saving = savingGroupCode,
+        error = groupCodeError,
+        onSave = { code ->
+            val security = services.security
+            if (security != null && !savingGroupCode) {
+                savingGroupCode = true
+                groupCodeError = null
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { security.setGroupCode(code) }
+                        hasGroupKey = security.hasGroupKey
+                        check(hasGroupKey) { "Group setup did not complete." }
+                        groupCodeOpen = false
+                        record("SOS group configured. The code is not logged.")
+                        notifyUser("SOS group configured on this phone. Other phones need the same code.")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        groupCodeError = failure.message ?: "Group code could not be saved."
+                    } finally { savingGroupCode = false }
+                }
+            }
+        },
+        onDismiss = { groupCodeOpen = false },
     )
 
     if (topologyOpen && debugTools && services != null) DebugTopologyDialog(

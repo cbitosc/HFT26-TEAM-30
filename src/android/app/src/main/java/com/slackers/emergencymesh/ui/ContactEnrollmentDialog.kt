@@ -36,6 +36,9 @@ internal fun ContactEnrollmentDialog(
     onCopy: (String) -> Unit,
     onEnroll: (ContactCard, Boolean) -> Unit,
     onDismiss: () -> Unit,
+    groupConfigured: Boolean,
+    canConfigureGroup: Boolean,
+    onConfigureGroup: () -> Unit,
 ) {
     var pasted by remember { mutableStateOf("") }
     var imported by remember { mutableStateOf<ContactCard?>(null) }
@@ -101,6 +104,10 @@ internal fun ContactEnrollmentDialog(
                 }
                 if (!canEnroll) Text("Saving waits for the real repository and security implementation.",
                     style = MaterialTheme.typography.bodySmall)
+                Text("SOS group: ${if (groupConfigured) "configured" else "not configured"}")
+                TextButton(enabled = canConfigureGroup && !saving, onClick = onConfigureGroup) {
+                    Text(if (groupConfigured) "Change SOS group code" else "Set SOS group code")
+                }
             }
         },
         confirmButton = {

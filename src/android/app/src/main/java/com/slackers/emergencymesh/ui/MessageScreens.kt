@@ -229,6 +229,9 @@ internal fun SosScreen(
     alerts: List<ChatMessage>,
     sending: Boolean,
     canSend: Boolean,
+    groupConfigured: Boolean,
+    canConfigureGroup: Boolean,
+    onConfigureGroup: () -> Unit,
     onRequestLocation: () -> Unit,
     onSend: (String, Boolean) -> Unit,
 ) {
@@ -242,6 +245,12 @@ internal fun SosScreen(
     ) {
         item { SectionHeading("Emergency SOS", "Broadcast to participating enrolled devices.") }
         item { Notice("Highest queue priority", "An SOS can be carried by nearby participants. It does not directly contact emergency services, and receipt by everyone is not guaranteed.") }
+        item {
+            if (!groupConfigured) Notice("SOS group not configured", "Set the same group code on participating phones before sending or reading group SOS alerts.")
+            TextButton(enabled = canConfigureGroup && !sending, onClick = onConfigureGroup) {
+                Text(if (groupConfigured) "Change SOS group code" else "Set SOS group code")
+            }
+        }
         item {
             OutlinedTextField(
                 value = draft,

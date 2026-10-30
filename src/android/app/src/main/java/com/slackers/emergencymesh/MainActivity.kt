@@ -29,19 +29,22 @@ class MainActivity : ComponentActivity() {
         // A persisted debug topology must never silently restrict a release build.
         if (!isDebugBuild(applicationContext)) transport.setDebugAllowlist(null)
         val database = EmergencyMeshDatabase.getInstance(applicationContext)
-        // M1 supplies a clearly labelled debug provider; release returns null until M4 lands.
-        val security = SecurityProvider.create(applicationContext)
+        // No plaintext fallback if the real Keystore-backed identity cannot be opened.
+        val securityResult = runCatching { SecurityProvider.create(applicationContext) }
         return AppServices(
             transport = transport,
             device = LocalDeviceStore.load(applicationContext),
-            security = security,
+            security = securityResult.getOrNull(),
+            initializationError = securityResult.exceptionOrNull()?.let {
+                "Secure identity could not be opened. Check the device Keystore and retry."
+            },
             storedMessages = StoredMessages(database.emergencyMeshDao()),
             radioLog = transport.log,
             readDebugAllowlist = { transport.debugAllowlist },
             // Waiting on the published M3 engine/repository constructor.
             // Attach those real instances here, with EngineLifecycle wired to M3's
             // actual start/readiness/stop API. The UI awaits it before transport.start.
-            // SecurityProvider must be replaced by M4 before any secure-build claim.
+            // M4's provider is attached; secure cross-phone messaging still needs engine tests.
         )
     }
 }
