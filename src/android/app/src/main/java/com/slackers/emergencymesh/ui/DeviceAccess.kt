@@ -3,12 +3,16 @@ package com.slackers.emergencymesh.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.pm.ApplicationInfo
 import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
 import com.slackers.emergencymesh.transport.RadioProblem
 import com.slackers.emergencymesh.transport.RadioReadiness
 import java.util.concurrent.TimeUnit
+
+internal fun isDebugBuild(context: Context): Boolean =
+    context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
 /** M1 owns this policy and the manifest. Keep one source of truth for discovery. */
 internal fun nearbyPermissions(): List<String> = RadioReadiness.requiredPermissions()

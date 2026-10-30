@@ -10,6 +10,7 @@ import com.slackers.emergencymesh.ui.AppServices
 import com.slackers.emergencymesh.ui.EmergencyMeshApp
 import com.slackers.emergencymesh.ui.EmergencyMeshTheme
 import com.slackers.emergencymesh.ui.StoredMessages
+import com.slackers.emergencymesh.ui.isDebugBuild
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -24,12 +25,15 @@ class MainActivity : ComponentActivity() {
 
     private fun createAppServices(): AppServices {
         val transport = NearbyMeshTransport.create(applicationContext)
+        // A persisted debug topology must never silently restrict a release build.
+        if (!isDebugBuild(applicationContext)) transport.setDebugAllowlist(null)
         val database = EmergencyMeshDatabase.getInstance(applicationContext)
         return AppServices(
             transport = transport,
             device = LocalDeviceStore.load(applicationContext),
             storedMessages = StoredMessages(database.emergencyMeshDao()),
             radioLog = transport.log,
+            readDebugAllowlist = { transport.debugAllowlist },
             // Waiting on the published M3 engine/repository and M4 security constructors.
             // Attach those real instances here, with EngineLifecycle wired to M3's
             // actual start/readiness/stop API. The UI awaits it before transport.start.

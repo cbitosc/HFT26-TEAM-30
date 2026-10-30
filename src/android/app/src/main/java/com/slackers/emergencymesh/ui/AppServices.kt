@@ -17,4 +17,5 @@ data class AppServices(
     /** Read-only bridge while M3's repository/engine is still being implemented. */
     val storedMessages: StoredMessages? = null,
     val radioLog: StateFlow<List<TransportLogEntry>>? = null,
+    val readDebugAllowlist: () -> Set<String>? = { null },
 )

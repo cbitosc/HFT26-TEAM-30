@@ -183,6 +183,9 @@ internal fun DebugScreen(
     radioLog: List<String>,
     onClear: () -> Unit,
     onCopy: () -> Unit,
+    showTopologyTools: Boolean,
+    allowlistSummary: String,
+    onTopology: () -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -190,6 +193,11 @@ internal fun DebugScreen(
     ) {
         item { SectionHeading("Debug log", "This session only · latest 200 events") }
         item { Notice("Current wiring", "$securityLabel\n$storageLabel\n$connectedCount connected peers reported by the transport.") }
+        if (showTopologyTools) item {
+            Text("DEBUG TOPOLOGY", style = MaterialTheme.typography.labelLarge)
+            Text(allowlistSummary, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onTopology) { Text("Configure allowed devices") }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onCopy, enabled = logs.isNotEmpty() || radioLog.isNotEmpty()) { Text("Copy logs") }

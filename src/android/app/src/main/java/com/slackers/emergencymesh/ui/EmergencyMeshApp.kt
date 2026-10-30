@@ -67,7 +67,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,6 +97,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var enrollmentOpen by remember { mutableStateOf(false) }
     var enrolling by remember { mutableStateOf(false) }
     var enrollmentError by remember { mutableStateOf<String?>(null) }
+    val debugTools = remember(context) { isDebugBuild(context) }
+    var topologyOpen by remember { mutableStateOf(false) }
+    var topologyError by remember { mutableStateOf<String?>(null) }
+    var debugAllowlist by remember(services) { mutableStateOf(services?.readDebugAllowlist?.invoke()) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
     var device by remember(services) { mutableStateOf(services?.device) }
     var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
@@ -480,6 +484,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     radioLog = radioEntries.map { entry ->
                         "${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(entry.timeMillis))}  ${entry.message}"
                     },
+                    showTopologyTools = debugTools && services != null,
+                    allowlistSummary = when {
+                        debugAllowlist == null -> "Allowlist off · unrestricted radio links"
+                        debugAllowlist?.isEmpty() == true -> "All radio peers blocked"
+                        else -> "${debugAllowlist?.size} stable device IDs allowed"
+                    },
+                    onTopology = { topologyError = null; topologyOpen = true },
                     onClear = { log.clear() },
                     onCopy = {
                         val radioText = radioEntries.joinToString("\n") { "${it.timeMillis}  ${it.message}" }
@@ -511,9 +522,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 scope.launch {
                     try {
                         val saved = withContext(Dispatchers.IO) {
-                            val existing = withTimeout(5_000) {
-                                repository.contacts.first().firstOrNull { it.deviceId == incoming.deviceId }
-                            }
+                            val snapshot = withTimeoutOrNull(5_000) { repository.contacts.first() }
+                                ?: throw IllegalStateException("Contact storage did not respond. Try again after it is ready.")
+                            val existing = snapshot.firstOrNull { it.deviceId == incoming.deviceId }
                             val card = contactForEnrollment(incoming, existing, ownId, compared)
                             repository.saveContact(card)
                             card
@@ -531,6 +542,27 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             }
         },
         onDismiss = { enrollmentOpen = false },
+    )
+
+    if (topologyOpen && debugTools && services != null) DebugTopologyDialog(
+        allowed = debugAllowlist,
+        knownDevices = contacts.associate { it.deviceId to it.displayName } +
+            peers.associate { it.deviceId to it.displayName },
+        localDeviceId = transportDevice?.deviceId,
+        applyError = topologyError,
+        onApply = { requested ->
+            if (debugTools) {
+                try {
+                    services.transport.setDebugAllowlist(requested)
+                    debugAllowlist = services.readDebugAllowlist()
+                    record("Debug radio filter applied: ${requested?.joinToString() ?: "unrestricted"}")
+                    topologyOpen = false
+                } catch (failure: Exception) {
+                    topologyError = failure.message ?: "Allowlist could not be changed."
+                }
+            }
+        },
+        onDismiss = { topologyOpen = false },
     )
 
     inspectedContact?.let { card ->
