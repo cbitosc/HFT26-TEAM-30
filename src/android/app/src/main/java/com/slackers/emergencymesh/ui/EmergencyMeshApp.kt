@@ -204,7 +204,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     // Keep the scan session across recreation/restarts, with an explicit local end and
     // the same maximum lifetime as an SOS. Failed sends never start a scan session.
     LaunchedEffect(services, activeSosUntil) {
-        val remaining = activeSosUntil - System.currentTimeMillis()
+        val scheduledUntil = activeSosUntil
+        val remaining = scheduledUntil - System.currentTimeMillis()
         val active = remaining > 0L
         try {
             val mode = if (active) DiscoveryMode.CONTINUOUS else DiscoveryMode.BALANCED
@@ -215,7 +216,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             notifyUser("Could not update SOS scanning. Check Nearby and Debug.")
         }
         if (active) delay(remaining)
-        if (activeSosUntil != 0L) {
+        if (scheduledUntil != 0L && activeSosUntil == scheduledUntil) {
             sosScanSession.end()
             activeSosUntil = 0L
         }
