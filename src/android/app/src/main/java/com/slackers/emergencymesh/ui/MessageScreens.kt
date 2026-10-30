@@ -36,11 +36,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.MAX_TEXT_CHARS
 import com.slackers.emergencymesh.core.PacketType
 import com.slackers.emergencymesh.core.Priority
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import java.text.DateFormat
 import java.util.Date
 
@@ -119,11 +123,12 @@ internal fun ConversationScreen(
     onBack: () -> Unit,
     onInspect: () -> Unit,
     onSend: (String, Priority) -> Unit,
+    observeStatusTimes: ((String) -> Flow<MessageStatusTimes?>)? = null,
 ) {
     var draft by rememberSaveable(deviceId) { mutableStateOf("") }
     var priorityName by rememberSaveable(deviceId) { mutableStateOf(Priority.P2_REGULAR.name) }
     val priority = Priority.valueOf(priorityName)
-    var shownStatus by remember { mutableStateOf<ChatMessage?>(null) }
+    var shownStatusId by remember(deviceId) { mutableStateOf<String?>(null) }
     var previousSubmission by remember(deviceId) { mutableStateOf(submission) }
     val listState = rememberLazyListState()
     val sorted = remember(messages) { messages.sortedWith(compareBy({ it.createdAtMillis }, { it.messageId })) }
@@ -157,7 +162,7 @@ internal fun ConversationScreen(
                     Modifier.padding(vertical = 24.dp), style = MaterialTheme.typography.bodyMedium)
             }
             items(sorted, key = { it.messageId }) { message ->
-                MessageBubble(message, onStatus = { shownStatus = message })
+                MessageBubble(message, onStatus = { shownStatusId = message.messageId })
             }
             item { Spacer(Modifier.height(4.dp)) }
         }
@@ -190,12 +195,17 @@ internal fun ConversationScreen(
         Spacer(Modifier.height(8.dp))
     }
 
-    shownStatus?.let { message ->
+    messages.firstOrNull { it.messageId == shownStatusId }?.let { message ->
+        val timesFlow = remember(message.messageId, observeStatusTimes) {
+            (observeStatusTimes?.invoke(message.messageId) ?: flowOf<MessageStatusTimes?>(null))
+                .catch { emit(null) }
+        }
+        val times by timesFlow.collectAsStateWithLifecycle(initialValue = null)
         AlertDialog(
-            onDismissRequest = { shownStatus = null },
+            onDismissRequest = { shownStatusId = null },
             title = { Text(statusLabel(message.status)) },
-            text = { Text(statusExplanation(message.status)) },
-            confirmButton = { TextButton(onClick = { shownStatus = null }) { Text("Done") } },
+            text = { MessageStatusTimeline(message, times) },
+            confirmButton = { TextButton(onClick = { shownStatusId = null }) { Text("Done") } },
         )
     }
 }

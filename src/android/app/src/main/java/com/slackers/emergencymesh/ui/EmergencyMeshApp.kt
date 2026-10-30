@@ -421,6 +421,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     canSend = canMessage && contact?.verified == true,
                     sending = sendingDirect,
                     submission = if (submittedConversationId == currentId) directSubmission else 0,
+                    observeStatusTimes = services?.statusTimes,
                     onBack = { conversationId = null },
                     onInspect = { inspectedContact = contact },
                     onSend = { text, priority ->

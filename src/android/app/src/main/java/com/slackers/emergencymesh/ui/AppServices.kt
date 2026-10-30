@@ -7,6 +7,7 @@ import com.slackers.emergencymesh.core.MessageSecurity
 import com.slackers.emergencymesh.transport.LocalDevice
 import com.slackers.emergencymesh.transport.TransportLogEntry
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 
 /** M2's wiring boundary. No mock, plaintext, or in-memory fallback is installed here. */
 data class AppServices(
@@ -21,4 +22,6 @@ data class AppServices(
     val readDebugAllowlist: () -> Set<String>? = { null },
     val initializationError: String? = null,
     val keyWarnings: StateFlow<List<ContactKeyWarning>>? = null,
+    /** Wire M3's persisted ACK history here when its timestamp API is published. */
+    val statusTimes: ((messageId: String) -> Flow<MessageStatusTimes?>)? = null,
 )
