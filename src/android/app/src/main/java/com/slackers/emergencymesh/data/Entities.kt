@@ -2,6 +2,7 @@ package com.slackers.emergencymesh.data
 
 import androidx.room.Entity
 import androidx.room.Index
+import androidx.room.ColumnInfo
 
 /** A contact is trusted only after the user has verified its fingerprint. */
 @Entity(tableName = "contacts")
@@ -41,6 +42,12 @@ data class QueuedPacketEntity(
     val messageId: String,
     val recipientDeviceId: String?,
     val encodedPacket: ByteArray,
+    /** Priority ordinal copied from the signed packet; relays have no local message row. */
+    @ColumnInfo(defaultValue = "2") val priority: Int = 2,
+    /** Stable ID of the immediate peer that supplied this copy; never echo to this peer. */
+    val receivedFromDeviceId: String? = null,
+    /** Retention expiry measured from the first local receipt. */
+    @ColumnInfo(defaultValue = "0") val expiresAtMillis: Long = Long.MAX_VALUE,
     val firstSeenAtMillis: Long,
     val queuedAtMillis: Long,
     val nextAttemptAtMillis: Long,
@@ -59,11 +66,11 @@ data class SeenPacketEntity(
 /** Per-peer receipts avoid a global "sent" bit suppressing delivery to later peers. */
 @Entity(
     tableName = "peer_receipts",
-    primaryKeys = ["messageId", "peerDeviceId"],
+    primaryKeys = ["packetId", "peerDeviceId"],
     indices = [Index("peerDeviceId")],
 )
 data class PeerReceiptEntity(
-    val messageId: String,
+    val packetId: String,
     val peerDeviceId: String,
     val acknowledgedAtMillis: Long?,
     val attemptCount: Int,
