@@ -36,8 +36,27 @@ interface EmergencyMeshDao {
     @Query("UPDATE messages SET hopCount = MAX(hopCount, :hopCount) WHERE messageId = :messageId")
     suspend fun updateHopCount(messageId: String, hopCount: Int)
 
-    @Query("SELECT qp.*, m.priority AS priorityOrder FROM queued_packets qp JOIN messages m ON qp.messageId = m.messageId WHERE qp.outgoing = 1 AND (qp.recipientDeviceId IS NULL OR qp.recipientDeviceId = :peerDeviceId) AND qp.nextAttemptAtMillis <= :nowMillis ORDER BY m.priority ASC, qp.queuedAtMillis ASC LIMIT :limit")
-    suspend fun dueOutgoingForPeer(peerDeviceId: String, nowMillis: Long, limit: Int): List<QueuedPacketWithPriority>
+    /**
+     * Flood retained packets toward any eligible peer, not only the final recipient.
+     * A per-peer receipt suppresses copies already acknowledged by this peer and
+     * supplies that peer's independent retry time.
+     */
+    @Query("""
+        SELECT q.* FROM queued_packets AS q
+        LEFT JOIN peer_receipts AS r
+          ON r.packetId = q.packetId AND r.peerDeviceId = :peerDeviceId
+        WHERE q.outgoing = 1
+          AND q.expiresAtMillis > :nowMillis
+          AND (q.receivedFromDeviceId IS NULL OR q.receivedFromDeviceId != :peerDeviceId)
+          AND (
+            (r.packetId IS NULL AND q.nextAttemptAtMillis <= :nowMillis)
+            OR (r.packetId IS NOT NULL AND r.acknowledgedAtMillis IS NULL
+                AND r.nextAttemptAtMillis <= :nowMillis)
+          )
+        ORDER BY q.priority ASC, q.queuedAtMillis ASC
+        LIMIT :limit
+        """)
+    suspend fun dueOutgoingForPeer(peerDeviceId: String, nowMillis: Long, limit: Int): List<QueuedPacketEntity>
 
     @Query("SELECT * FROM queued_packets WHERE packetId = :packetId LIMIT 1")
     suspend fun queuedPacket(packetId: String): QueuedPacketEntity?
@@ -48,6 +67,9 @@ interface EmergencyMeshDao {
     @Query("DELETE FROM queued_packets WHERE packetId = :packetId")
     suspend fun deleteQueuedPacket(packetId: String)
 
+    @Query("DELETE FROM queued_packets WHERE expiresAtMillis <= :nowMillis")
+    suspend fun pruneExpiredPackets(nowMillis: Long)
+
     @Query("SELECT EXISTS(SELECT 1 FROM seen_packets WHERE packetId = :packetId)")
     suspend fun hasSeen(packetId: String): Boolean
 
@@ -57,11 +79,20 @@ interface EmergencyMeshDao {
     @Query("DELETE FROM seen_packets WHERE expiresAtMillis <= :nowMillis")
     suspend fun pruneSeen(nowMillis: Long)
 
-    @Query("SELECT * FROM peer_receipts WHERE messageId = :messageId")
-    suspend fun receiptsForMessage(messageId: String): List<PeerReceiptEntity>
+    @Query("SELECT * FROM peer_receipts WHERE packetId = :packetId")
+    suspend fun receiptsForPacket(packetId: String): List<PeerReceiptEntity>
+
+    @Query("SELECT * FROM peer_receipts WHERE packetId = :packetId AND peerDeviceId = :peerDeviceId LIMIT 1")
+    suspend fun receipt(packetId: String, peerDeviceId: String): PeerReceiptEntity?
+
+    @Query("UPDATE peer_receipts SET acknowledgedAtMillis = :acknowledgedAtMillis WHERE packetId = :packetId AND peerDeviceId = :peerDeviceId")
+    suspend fun acknowledgePacketForPeer(packetId: String, peerDeviceId: String, acknowledgedAtMillis: Long)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putPeerReceipt(receipt: PeerReceiptEntity)
+
+    @Query("DELETE FROM peer_receipts WHERE packetId NOT IN (SELECT packetId FROM queued_packets)")
+    suspend fun pruneOrphanedPeerReceipts()
 
     /** New outgoing work is visible as Pending and durable before any send attempt. */
     @Transaction
@@ -70,17 +101,3 @@ interface EmergencyMeshDao {
         putQueuedPacket(packet)
     }
 }
-
-/** Projection with priority from the owning message row for SOS-first FIFO scheduling. */
-data class QueuedPacketWithPriority(
-    val packetId: String,
-    val messageId: String,
-    val recipientDeviceId: String?,
-    val encodedPacket: ByteArray,
-    val firstSeenAtMillis: Long,
-    val queuedAtMillis: Long,
-    val nextAttemptAtMillis: Long,
-    val attemptCount: Int,
-    val outgoing: Boolean,
-    val priorityOrder: Int,
-)
