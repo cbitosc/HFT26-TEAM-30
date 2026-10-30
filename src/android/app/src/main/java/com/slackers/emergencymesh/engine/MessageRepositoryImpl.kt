@@ -23,6 +23,7 @@ import com.slackers.emergencymesh.data.MessageEntity
 import com.slackers.emergencymesh.data.QueuedPacketEntity
 import com.slackers.emergencymesh.data.SeenPacketEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -47,6 +48,7 @@ class MessageRepositoryImpl(
     private var engineJob: Job? = null
     private var engineScope = scope
     private val peerLocks = mutableMapOf<String, Mutex>()
+    private val lifecycleMutex = Mutex()
 
     override val contacts: Flow<List<ContactCard>> = dao.observeContacts().map { rows -> rows.map(::toCard) }
 
@@ -57,10 +59,13 @@ class MessageRepositoryImpl(
     override fun conversation(deviceId: String): Flow<List<ChatMessage>> =
         dao.observeConversation(deviceId).map { rows -> rows.mapNotNull(::toChatMessage) }
 
-    /** Start once from app wiring; retry retained packets whenever a peer reconnects. */
-    fun start() {
-        if (eventJob != null) return
-        eventJob = workers().launch {
+    /**
+     * Subscribe before returning so callers can safely start the radio immediately afterward.
+     * UNDISPATCHED runs the collector through SharedFlow subscription before its first suspension.
+     */
+    suspend fun startAndAwaitReady() = lifecycleMutex.withLock {
+        if (eventJob?.isActive == true) return@withLock
+        eventJob = workers().launch(start = CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
                 when (event) {
                     is TransportEvent.PeerConnected -> dispatchTo(event.peer)
@@ -74,6 +79,7 @@ class MessageRepositoryImpl(
             .forEach { peer -> engineScope.launch { dispatchTo(peer) } }
     }
 
+    @Synchronized
     fun stop() {
         eventJob?.cancel()
         eventJob = null
@@ -213,6 +219,9 @@ class MessageRepositoryImpl(
     }
 
     private suspend fun handleIncoming(fromEndpointId: String, packet: Packet) {
+        // ContactCardService owns direct card exchange and enrollment. The relay engine must
+        // never retain, acknowledge, forward, or display a contact-card packet.
+        if (packet.type == PacketType.CONTACT_CARD) return
         if (!isValidHopState(packet)) return
         val source = transport.peers.value.firstOrNull { it.endpointId == fromEndpointId } ?: return
         val sender = dao.contact(packet.senderId)?.let(::toCard) ?: return

@@ -2,6 +2,7 @@ package com.slackers.emergencymesh.engine
 
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
+import com.slackers.emergencymesh.core.ContactExchange
 import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.MessageSecurity
 import com.slackers.emergencymesh.core.MessageStatus
@@ -51,8 +52,10 @@ class RelayEngineInMemoryMeshTest {
         val repoC = MessageRepositoryImpl(daoC, transportC, securityC, this)
 
         try {
-            listOf(repoA, repoB, repoC).forEach { it.start() }
-            runCurrent()
+            listOf(repoA, repoB, repoC).forEach {
+                it.startAndAwaitReady()
+                it.startAndAwaitReady()
+            }
             repoA.saveContact(cardB)
             repoA.saveContact(cardC)
             repoB.saveContact(cardA)
@@ -85,7 +88,42 @@ class RelayEngineInMemoryMeshTest {
                 },
             )
         } finally {
-            listOf(repoA, repoB, repoC).forEach { it.stop() }
+            listOf(repoA, repoB, repoC).forEach {
+                it.stop()
+                it.stop()
+            }
+        }
+    }
+
+    @Test
+    fun contactCardPacketsAreIgnoredByTheRelayEngine() = runTest {
+        val mesh = InMemoryMesh()
+        val transportA = mesh.phone("A")
+        val transportB = mesh.phone("B")
+        mesh.link("A", "B")
+
+        val cardA = contact("A")
+        val cardB = contact("B")
+        val daoB = InMemoryEmergencyMeshDao()
+        val repoA = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), transportA, TestMessageSecurity(cardA), this)
+        val repoB = MessageRepositoryImpl(daoB, transportB, TestMessageSecurity(cardB), this)
+
+        try {
+            repoA.startAndAwaitReady()
+            repoB.startAndAwaitReady()
+            val packet = ContactExchange.buildPacket(TestMessageSecurity(cardA), "contact-A", 1L)
+            transportA.send(transportB.peers.value.single().endpointId, packet)
+            runCurrent()
+
+            assertFalse(daoB.hasSeen(packet.id))
+            assertNull(daoB.queuedPacket(packet.id))
+            assertNull(daoB.message(packet.id))
+            assertFalse(mesh.sentLog.any { it.fromDeviceId == "B" })
+        } finally {
+            repoA.stop()
+            repoA.stop()
+            repoB.stop()
+            repoB.stop()
         }
     }
 
