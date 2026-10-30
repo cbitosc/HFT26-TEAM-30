@@ -120,7 +120,8 @@ class NearbyMeshTransport internal constructor(
         if (running) return
         running = true
         this.localDeviceId = localDeviceId
-        endpointName = EndpointName.encode(localDeviceId, displayName)
+        val name = displayName.ifBlank { "Phone ${localDeviceId.take(4)}" }
+        endpointName = EndpointName.encode(localDeviceId, name)
         radio.listener = radioListener
         log("Starting as ${localDeviceId.short()}, mode $mode")
         radio.startAdvertising(endpointName) { result ->

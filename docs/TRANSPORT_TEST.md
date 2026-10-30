@@ -17,7 +17,18 @@ cd src/android
 5. Tap **Permissions** and allow everything.
 6. Tap **Recheck** and record any problem shown.
 
-For each test, turn on airplane mode, then turn Bluetooth and Wi-Fi back on. Don't join a Wi-Fi network. Record the phone models, Android versions and result.
+For each test:
+
+1. Turn on airplane mode.
+2. Turn Bluetooth back on.
+3. Keep Wi-Fi off. Phones can auto-join saved networks when Wi-Fi comes back on, which restores internet.
+4. Confirm no internet on each phone with this command, which should print `Network is unreachable`:
+
+```bash
+adb shell ping -c 1 -W 2 8.8.8.8
+```
+
+Quick-settings panels hide the app, so close them before reading results. Record the phone models, Android versions and result.
 
 ## Test 1: two-phone exchange (G1)
 

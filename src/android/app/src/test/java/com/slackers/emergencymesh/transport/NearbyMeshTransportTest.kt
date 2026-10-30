@@ -38,10 +38,13 @@ private class FakeRadio : NearbyRadio {
     var discoveryStarts = 0
     var discoveryStops = 0
     var requestResult = RadioResult(true)
+    var advertisedName = ""
     private var nextPayloadId = 1L
 
-    override fun startAdvertising(name: String, onResult: (RadioResult) -> Unit) =
+    override fun startAdvertising(name: String, onResult: (RadioResult) -> Unit) {
+        advertisedName = name
         onResult(RadioResult(true))
+    }
 
     override fun startDiscovery(onResult: (RadioResult) -> Unit) {
         discoveryStarts++
@@ -189,6 +192,15 @@ class NearbyMeshTransportTest {
         radio.listener!!.onConnectionResult("e1", true, 0)
         assertEquals(PeerState.CONNECTED, transport.peers.value.single().state)
         assertTrue(store.isApproved(HIGH_ID))
+        transport.stop()
+    }
+
+    @Test
+    fun blankDisplayNameFallsBackToDeviceId() = runTest {
+        val transport = NearbyMeshTransport(radio, store, StandardTestDispatcher(testScheduler))
+        transport.start(LOCAL_ID, "  ")
+        runCurrent()
+        assertEquals(EndpointName.encode(LOCAL_ID, "Phone mmmm"), radio.advertisedName)
         transport.stop()
     }
 

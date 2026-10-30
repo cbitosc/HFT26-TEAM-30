@@ -81,6 +81,7 @@ transport.start(device.deviceId, device.displayName)
 - **M2:** request `RadioReadiness.requiredPermissions()` before `start`, and show each `RadioProblem`.
 - **M2:** when a peer is `AWAITING_APPROVAL`, show `authToken` on both phones, then call `respondToConnection`.
 - **M2:** `transport.log` holds recent radio activity for the Debug section.
+- **M2:** this app targets Android 15, so screens draw behind the status bar. Apply `systemBarsPadding()` or a `Scaffold` to every screen.
 - **M3:** handle `PacketReceived(fromEndpointId, packet)`, and never echo a packet back to `fromEndpointId`.
 - **M3:** re-check retained packets for a peer on every `PeerConnected`.
 - **M3:** `send` returning `TransportComplete` only means the bytes left this phone.
