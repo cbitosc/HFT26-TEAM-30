@@ -86,6 +86,8 @@ transport.start(device.deviceId, device.displayName)
 - **M3:** `send` returning `TransportComplete` only means the bytes left this phone.
 - **M3:** set `DiscoveryMode.CONTINUOUS` while an SOS is active, then return to `BALANCED`.
 
+- **M3:** `InMemoryMesh` in `src/test` simulates linked phones, so relay logic can be unit-tested without radios. It isn't relay evidence for the demo.
+
 Approved peers reconnect without another prompt. This approval only controls the radio link, so identity still depends on M4's signature checks.
 
 ## Security

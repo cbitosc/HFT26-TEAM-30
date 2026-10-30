@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.slackers.emergencymesh.core.DiscoveryMode
+import com.slackers.emergencymesh.core.MalformedPacketException
 import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.Packet
 import com.slackers.emergencymesh.core.PacketCodec
@@ -105,7 +106,12 @@ class MeshTestActivity : ComponentActivity() {
     }
 
     private fun handlePacket(fromEndpointId: String, packet: Packet) {
-        val text = PacketCodec.decodeBody(packet.encryptedBody).text
+        val text = try {
+            PacketCodec.decodeBody(packet.encryptedBody).text
+        } catch (e: MalformedPacketException) {
+            addMessage("MALFORMED BODY: ${e.message}")
+            return
+        }
         when {
             text.startsWith(PING) -> {
                 addMessage("PING from ${packet.senderId.take(8)}, replying")
