@@ -99,6 +99,15 @@ interface MessageSecurity {
     /** True only for the labelled development build. It must be false in the final demo. */
     val isDevelopmentPlaintext: Boolean
 
+    /** False until this phone has the group code needed to send and read SOS. */
+    val hasGroupKey: Boolean get() = true
+
+    /**
+     * Enrolled members type the same code on each phone. Anyone holding it can read SOS.
+     * Throws [SecurityException] when the code is too short.
+     */
+    fun setGroupCode(code: String) {}
+
     fun localContactCard(): ContactCard
     fun fingerprint(card: ContactCard): String
 
