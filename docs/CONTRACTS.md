@@ -93,19 +93,22 @@ Approved peers reconnect without another prompt. This approval only controls the
 
 ## Contact exchange
 
-Phones must swap contact cards before direct messaging, so enroll all phones before forcing the A-B-C topology.
+`ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.
 
-**M3 engine:**
+**M2:** start it in `MainActivity`, before the transport starts, and show `keyWarnings` to the user:
 
-1. On `PeerConnected`, send `ContactExchange.buildPacket(security, uuid, now)` straight to that endpoint. Don't queue it.
-2. On a received `CONTACT_CARD`, call `ContactExchange.readPacket(security, packet, peer.deviceId)`. A `SecurityException` means drop it and log why.
-3. Call `ContactExchange.compare(storedCard, card)`:
-   - `NEW`: save it with `verified = false`.
-   - `UNCHANGED`: keep the stored card.
-   - `KEYS_CHANGED`: keep the stored card and show a warning. Never overwrite it automatically.
-4. Never forward, ACK or display a `CONTACT_CARD`. Its TTL is 0, and a forwarded card is rejected.
+```kotlin
+val contactCards = ContactCardService(transport, security, RoomContactBook(dao))
+contactCards.start(lifecycleScope)
+```
 
-A received card is never verified. It only becomes verified when a person compares fingerprints in the app.
+**M3:** the engine must ignore `CONTACT_CARD`. Don't forward, ACK, queue or display it.
+
+- A received card is saved as unverified, and only a person comparing fingerprints can verify it.
+- A verified contact stays verified when the same card arrives again.
+- If a known device sends different keys, the stored keys stay and `keyWarnings` reports it.
+- A forged card, a bad signature or a forwarded card is dropped.
+- Cards have a TTL of 0, so they never travel beyond a direct connection.
 
 ## Security
 
