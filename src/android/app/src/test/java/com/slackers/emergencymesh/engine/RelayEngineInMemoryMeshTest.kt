@@ -6,8 +6,11 @@ import com.slackers.emergencymesh.core.ContactExchange
 import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.MessageSecurity
 import com.slackers.emergencymesh.core.MessageStatus
+import com.slackers.emergencymesh.core.MeshTransport
 import com.slackers.emergencymesh.core.PacketCodec
+import com.slackers.emergencymesh.core.PacketType
 import com.slackers.emergencymesh.core.Priority
+import com.slackers.emergencymesh.core.SendResult
 import com.slackers.emergencymesh.data.ContactEntity
 import com.slackers.emergencymesh.data.EmergencyMeshDao
 import com.slackers.emergencymesh.data.MessageEntity
@@ -16,6 +19,7 @@ import com.slackers.emergencymesh.data.QueuedPacketEntity
 import com.slackers.emergencymesh.data.SeenPacketEntity
 import com.slackers.emergencymesh.transport.InMemoryMesh
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runCurrent
@@ -110,7 +114,8 @@ class RelayEngineInMemoryMeshTest {
 
         try {
             repoA.startAndAwaitReady()
-            repoB.startAndAwaitReady()
+            repoB.start()
+            repoB.saveContact(cardA)
             val packet = ContactExchange.buildPacket(TestMessageSecurity(cardA), "contact-A", 1L)
             transportA.send(transportB.peers.value.single().endpointId, packet)
             runCurrent()
@@ -123,6 +128,49 @@ class RelayEngineInMemoryMeshTest {
             repoA.stop()
             repoA.stop()
             repoB.stop()
+            repoB.stop()
+        }
+    }
+
+    @Test
+    fun newlyQueuedSosJumpsAheadOfTheRemainingBacklog() = runTest {
+        val mesh = InMemoryMesh()
+        val underlyingA = mesh.phone("A")
+        val transportB = mesh.phone("B")
+
+        val cardA = contact("A")
+        val cardB = contact("B")
+        val gatedTransportA = PauseFirstSendTransport(underlyingA)
+        val repoA = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), gatedTransportA, TestMessageSecurity(cardA), this)
+        val repoB = MessageRepositoryImpl(InMemoryEmergencyMeshDao(), transportB, TestMessageSecurity(cardB), this)
+
+        try {
+            repoA.startAndAwaitReady()
+            repoB.startAndAwaitReady()
+            repoA.saveContact(cardB)
+            repoB.saveContact(cardA)
+
+            val firstRegularId = repoA.sendDirect("B", "first", Priority.P2_REGULAR)
+            repoA.sendDirect("B", "second", Priority.P2_REGULAR)
+            repoA.sendDirect("B", "third", Priority.P2_REGULAR)
+            // Queue the regular backlog while offline. Connecting snapshots that backlog into
+            // one dispatch batch, then the in-flight send is paused while SOS is added.
+            mesh.link("A", "B")
+            runCurrent()
+            assertTrue(gatedTransportA.firstSendStarted.isCompleted)
+
+            repoA.sendSos(MessageBody("urgent"))
+            gatedTransportA.releaseFirstSend.complete(Unit)
+            runCurrent()
+
+            val outgoingTypes = mesh.sentLog
+                .filter { it.fromDeviceId == "A" && it.toDeviceId == "B" }
+                .map { it.packet }
+                .filter { it.type == PacketType.MESSAGE || it.type == PacketType.SOS }
+            assertEquals(firstRegularId, outgoingTypes.first().id)
+            assertEquals(PacketType.SOS, outgoingTypes[1].type)
+        } finally {
+            repoA.stop()
             repoB.stop()
         }
     }
@@ -153,6 +201,23 @@ class RelayEngineInMemoryMeshTest {
         override fun sign(signedBytes: ByteArray) = byteArrayOf(1)
         override fun verify(sender: ContactCard, signedBytes: ByteArray, signature: ByteArray) =
             sender.verified && signature.contentEquals(byteArrayOf(1))
+    }
+
+    private class PauseFirstSendTransport(
+        private val delegate: MeshTransport,
+    ) : MeshTransport by delegate {
+        val firstSendStarted = CompletableDeferred<Unit>()
+        val releaseFirstSend = CompletableDeferred<Unit>()
+        private var hasPaused = false
+
+        override suspend fun send(endpointId: String, packet: com.slackers.emergencymesh.core.Packet): SendResult {
+            if (!hasPaused) {
+                hasPaused = true
+                firstSendStarted.complete(Unit)
+                releaseFirstSend.await()
+            }
+            return delegate.send(endpointId, packet)
+        }
     }
 
     /** In-memory DAO keeps this unit test independent from Android and Room runtime. */
