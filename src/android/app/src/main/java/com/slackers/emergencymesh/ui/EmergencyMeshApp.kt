@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -47,6 +49,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
+import com.slackers.emergencymesh.core.ContactKeyWarning
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.PeerInfo
@@ -94,6 +97,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var directSubmission by remember { mutableStateOf(0) }
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
+    var reviewingKeyWarnings by rememberSaveable { mutableStateOf(false) }
     var enrollmentOpen by remember { mutableStateOf(false) }
     var enrolling by remember { mutableStateOf(false) }
     var enrollmentError by remember { mutableStateOf<String?>(null) }
@@ -171,6 +175,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         }
     }
     val contacts by contactsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val keyWarningsFlow = remember(services) {
+        services?.keyWarnings ?: flowOf(emptyList<ContactKeyWarning>())
+    }
+    val keyWarnings by keyWarningsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val alerts by alertsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val messages by conversationFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val peersFlow = remember(services) { services?.transport?.peers ?: flowOf(emptyList<PeerInfo>()) }
@@ -333,6 +341,16 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (keyWarnings.isNotEmpty()) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Contact keys changed · ${keyWarnings.size}", Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onErrorContainer)
+                        TextButton(onClick = { reviewingKeyWarnings = true }) { Text("Review") }
+                    }
+                }
+            }
             if (!canMessage) {
                 Notice(
                     if (services == null) "Integration pending" else "Connections ready · messaging pending",
@@ -514,6 +532,26 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             }
         }
     }
+
+    if (reviewingKeyWarnings && keyWarnings.isNotEmpty()) AlertDialog(
+        onDismissRequest = { reviewingKeyWarnings = false },
+        title = { Text("Contact keys changed") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("A connected device offered different keys for a known contact. This may mean a reinstall or impersonation. Stored keys and verification were kept; the new keys were not accepted.")
+                keyWarnings.distinctBy { it.deviceId }.forEach { warning ->
+                    val knownName = contacts.firstOrNull { it.deviceId == warning.deviceId }?.displayName
+                    Text("${knownName?.takeIf { it.isNotBlank() } ?: "Known device"}\n${warning.deviceId}",
+                        style = MaterialTheme.typography.bodyMedium)
+                }
+                Text("Contact the person through a trusted channel and compare fingerprints before trusting a replacement identity.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { reviewingKeyWarnings = false }) { Text("Close") }
+        },
+    )
 
     if (enrollmentOpen) ContactEnrollmentDialog(
         localCard = localCard,

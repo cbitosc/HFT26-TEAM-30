@@ -38,7 +38,8 @@ class MainActivity : ComponentActivity() {
         val securityResult = runCatching { SecurityProvider.create(applicationContext) }
         val security = securityResult.getOrNull()
         val repository = security?.let { MessageRepositoryImpl(dao, transport, it, lifecycleScope) }
-        security?.let { ContactCardService(transport, it, RoomContactBook(dao)).start(lifecycleScope) }
+        val contactCards = security?.let { ContactCardService(transport, it, RoomContactBook(dao)) }
+        contactCards?.start(lifecycleScope)
         return AppServices(
             transport = transport,
             device = LocalDeviceStore.load(applicationContext),
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
             storedMessages = StoredMessages(dao),
             radioLog = transport.log,
             readDebugAllowlist = { transport.debugAllowlist },
+            keyWarnings = contactCards?.keyWarnings,
         )
     }
 }

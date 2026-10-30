@@ -1,6 +1,7 @@
 package com.slackers.emergencymesh.ui
 
 import com.slackers.emergencymesh.core.MeshTransport
+import com.slackers.emergencymesh.core.ContactKeyWarning
 import com.slackers.emergencymesh.core.MessageRepository
 import com.slackers.emergencymesh.core.MessageSecurity
 import com.slackers.emergencymesh.transport.LocalDevice
@@ -19,4 +20,5 @@ data class AppServices(
     val radioLog: StateFlow<List<TransportLogEntry>>? = null,
     val readDebugAllowlist: () -> Set<String>? = { null },
     val initializationError: String? = null,
+    val keyWarnings: StateFlow<List<ContactKeyWarning>>? = null,
 )
