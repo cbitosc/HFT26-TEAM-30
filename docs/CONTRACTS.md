@@ -118,6 +118,14 @@ See `docs/DASHBOARD_UPLOAD_TEST.md` for the phone test.
 
 See `docs/CALL_OUT_TEST.md` for the phone test.
 
+## Last Breath
+
+- At 5% battery and not charging, a phone with an active SOS sends one final SOS through `sendSos`, so relays treat it like any other SOS.
+- It sends once per SOS, and that survives a restart.
+- A phone that never asked for help sends nothing.
+
+See `docs/LAST_BREATH_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

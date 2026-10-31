@@ -6,9 +6,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.os.BatteryManager
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -28,6 +31,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -140,6 +146,7 @@ class MeshForegroundService : Service() {
         following = scope.launch {
             launch { alertNewMessages(services) }
             launch { ringWhenCalled(services) }
+            launch { watchBattery(services) }
             combine(session.running, services.transport.peers, session.problem) { running, peers, problem ->
                 if (running) meshStatusText(
                     connected = peers.count { it.state == PeerState.CONNECTED },
@@ -183,6 +190,42 @@ class MeshForegroundService : Service() {
             val contacts = repository.contacts.catch { emit(emptyList()) }.first()
             alerts.showCallOut(contacts.firstOrNull { it.deviceId == callerId }?.displayName, stop)
         }
+    }
+
+    private suspend fun watchBattery(services: AppServices) {
+        val repository = services.repository ?: return
+        val sosSession = SosScanSessionStore(this)
+        val lastBreath = LastBreath(
+            sosUntil = sosSession::readUntil,
+            sentFor = sosSession::lastBreathSentFor,
+            markSent = sosSession::markLastBreathSent,
+            alerts = { repository.sosAlerts.first() },
+            send = { repository.sendSos(it) },
+        )
+        batteryStates().distinctUntilChanged().collect { state ->
+            // A storage failure here must not take the relay down. The next change tries again.
+            runCatching { lastBreath.onBattery(state) }
+        }
+    }
+
+    private fun batteryStates(): Flow<BatteryState> = callbackFlow {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (level >= 0 && scale > 0) {
+                    val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                    trySend(BatteryState(level * 100 / scale, plugged))
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            this@MeshForegroundService,
+            receiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        awaitClose { unregisterReceiver(receiver) }
     }
 
     private fun notification(status: String): Notification {
