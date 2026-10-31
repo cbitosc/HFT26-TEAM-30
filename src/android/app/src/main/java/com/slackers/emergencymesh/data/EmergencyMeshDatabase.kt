@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SeenPacketEntity::class,
         PeerReceiptEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class EmergencyMeshDatabase : RoomDatabase() {
@@ -34,8 +34,16 @@ abstract class EmergencyMeshDatabase : RoomDatabase() {
                     context.applicationContext,
                     EmergencyMeshDatabase::class.java,
                     DATABASE_NAME,
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN sentAtMillis INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN relayedAtMillis INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN deliveredAtMillis INTEGER")
+            }
+        }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

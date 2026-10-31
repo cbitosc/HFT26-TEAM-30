@@ -42,7 +42,7 @@ class MessageRepositoryImpl(
     private val security: MessageSecurity,
     private val scope: CoroutineScope,
     private val nowMillis: () -> Long = System::currentTimeMillis,
-) : MessageRepository {
+) : MessageRepository, MessageStatusTimeline {
     private val localCard = security.localContactCard()
     private var eventJob: Job? = null
     private var engineJob: Job? = null
@@ -57,6 +57,17 @@ class MessageRepositoryImpl(
 
     override fun conversation(deviceId: String): Flow<List<ChatMessage>> =
         dao.observeConversation(deviceId).map { rows -> rows.mapNotNull(::toChatMessage) }
+
+    override fun observeStatusTimes(messageId: String): Flow<MessageStatusTimes?> =
+        dao.observeMessage(messageId).map { row ->
+            row?.let {
+                MessageStatusTimes(
+                    sentAtMillis = it.sentAtMillis,
+                    relayedAtMillis = it.relayedAtMillis,
+                    deliveredAtMillis = it.deliveredAtMillis,
+                )
+            }
+        }
 
     /**
      * Subscribe before returning so callers can safely start the radio immediately afterward.
@@ -303,6 +314,7 @@ class MessageRepositoryImpl(
                         createdAtMillis = packet.createdAtMillis,
                         status = if (packet.type == PacketType.MESSAGE) MessageStatus.DELIVERED.name else MessageStatus.PENDING.name,
                         hopCount = packet.hopCount,
+                        deliveredAtMillis = if (packet.type == PacketType.MESSAGE) now else null,
                     ),
                 )
             }
@@ -333,9 +345,7 @@ class MessageRepositoryImpl(
                 }
                 else -> null
             }
-            if (newStatus != null && newStatus.ordinal > statusOf(message.status).ordinal) {
-                dao.updateStatus(referencedId, newStatus.name)
-            }
+            if (newStatus != null) dao.advanceMessageStatus(referencedId, newStatus, now)
         }
 
         // A relay confirms onward progress to the original sender after a downstream ACK.

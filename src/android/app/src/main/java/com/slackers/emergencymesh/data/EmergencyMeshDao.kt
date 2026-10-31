@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.slackers.emergencymesh.core.MessageStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -27,11 +28,40 @@ interface EmergencyMeshDao {
     @Query("SELECT * FROM messages WHERE messageId = :messageId LIMIT 1")
     suspend fun message(messageId: String): MessageEntity?
 
+    @Query("SELECT * FROM messages WHERE messageId = :messageId LIMIT 1")
+    fun observeMessage(messageId: String): Flow<MessageEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putMessage(message: MessageEntity)
 
     @Query("UPDATE messages SET status = :status WHERE messageId = :messageId")
     suspend fun updateStatus(messageId: String, status: String)
+
+    @Query("UPDATE messages SET sentAtMillis = COALESCE(sentAtMillis, :atMillis) WHERE messageId = :messageId")
+    suspend fun recordSentAt(messageId: String, atMillis: Long)
+
+    @Query("UPDATE messages SET relayedAtMillis = COALESCE(relayedAtMillis, :atMillis) WHERE messageId = :messageId")
+    suspend fun recordRelayedAt(messageId: String, atMillis: Long)
+
+    @Query("UPDATE messages SET deliveredAtMillis = COALESCE(deliveredAtMillis, :atMillis) WHERE messageId = :messageId")
+    suspend fun recordDeliveredAt(messageId: String, atMillis: Long)
+
+    /** Keep status monotonic while persisting the first time each milestone is observed. */
+    @Transaction
+    suspend fun advanceMessageStatus(messageId: String, status: MessageStatus, atMillis: Long) {
+        val current = message(messageId) ?: return
+        val currentStatus = runCatching { MessageStatus.valueOf(current.status) }
+            .getOrDefault(MessageStatus.PENDING)
+        val advancesStatus = status.ordinal > currentStatus.ordinal
+        if (advancesStatus) updateStatus(messageId, status.name)
+        if (!advancesStatus && status != currentStatus) return
+        when (status) {
+            MessageStatus.PENDING -> Unit
+            MessageStatus.SENT -> recordSentAt(messageId, atMillis)
+            MessageStatus.RELAYED -> recordRelayedAt(messageId, atMillis)
+            MessageStatus.DELIVERED -> recordDeliveredAt(messageId, atMillis)
+        }
+    }
 
     @Query("UPDATE messages SET hopCount = MAX(hopCount, :hopCount) WHERE messageId = :messageId")
     suspend fun updateHopCount(messageId: String, hopCount: Int)
