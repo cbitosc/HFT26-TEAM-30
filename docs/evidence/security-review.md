@@ -21,7 +21,7 @@ The final build is `8a0fe65`. During the phone test on 31 October at 13:32–13:
 | `routeback1333` | C to A through B | Found | **Not found** | Found |
 | `routemoved1337` | A to C through B | Found | **Not found** | Found |
 
-All 5 copies of B's database gave the same result. The search ran after SQLite had merged each copy's write-ahead log, so older log entries weren't searched.
+I searched the 3 copies of B's database taken after the last of these messages, and neither earlier copy held the first two. The search ran after SQLite had merged each copy's write-ahead log, so older log entries weren't searched.
 
 Separate searches of B's database and write-ahead log also found no test text on earlier builds: see [relay A to C](relay-a-to-c.md), [required features](required-features.md), [final build](final-build.md) and [extras](extras-phone-test.md).
 
