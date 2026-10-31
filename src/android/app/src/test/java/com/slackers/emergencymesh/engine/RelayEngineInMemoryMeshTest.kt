@@ -56,6 +56,49 @@ class RelayEngineInMemoryMeshTest {
     }
 
     @Test
+    fun aHeldPathIsReleasedWhenTheNextHopStaysConnectedButCanNotDeliver() = runTest {
+        val mesh = InMemoryMesh()
+        val ids = listOf("A", "B", "C", "D", "E")
+        val phones = ids.associateWith(mesh::phone)
+        mesh.link("A", "B")
+        mesh.link("B", "D")
+        mesh.link("A", "C")
+        mesh.link("C", "E")
+        mesh.link("E", "D")
+
+        val clock = { 1_000L + testScheduler.currentTime }
+        val daos = ids.associateWith { InMemoryEmergencyMeshDao() }
+        val repos = ids.associateWith { id ->
+            MessageRepositoryImpl(
+                daos.getValue(id), phones.getValue(id), TestMessageSecurity(contact(id)), this, nowMillis = clock,
+            )
+        }
+
+        try {
+            repos.values.forEach { it.startAndAwaitReady() }
+            ids.forEach { id ->
+                ids.filterNot { it == id }.forEach { other -> repos.getValue(id).saveContact(contact(other)) }
+            }
+            val warmupId = repos.getValue("A").sendDirect("D", "learn routes", Priority.P2_REGULAR)
+            runCurrent()
+            assertEquals(MessageStatus.DELIVERED.name, daos.getValue("A").message(warmupId)?.status)
+
+            mesh.unlink("B", "D")
+            runCurrent()
+            val id = repos.getValue("A").sendDirect("D", "the short route broke", Priority.P2_REGULAR)
+            runCurrent()
+            assertNull("The longer path waits for the short route first", daos.getValue("D").message(id))
+
+            advanceTimeBy(8_500)
+            runCurrent()
+            assertNotNull("The longer path is released after 8 seconds", daos.getValue("D").message(id))
+            assertTrue(mesh.sentLog.any { it.packet.id == id && it.fromDeviceId == "A" && it.toDeviceId == "C" })
+        } finally {
+            repos.values.forEach { it.stop() }
+        }
+    }
+
+    @Test
     fun directMessageUsesShortestLearnedRouteThenFloodsAfterNextHopDisconnects() = runTest {
         val mesh = InMemoryMesh()
         val ids = listOf("A", "B", "C", "D", "E")

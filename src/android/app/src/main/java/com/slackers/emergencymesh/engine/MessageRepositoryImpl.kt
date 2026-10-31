@@ -330,9 +330,9 @@ class MessageRepositoryImpl(
                         }
                     } == true
                     val nextHopIsNotPacketSource = route?.nextHopDeviceId != queued.receivedFromDeviceId
-                    if (route != null && nextHopConnected && nextHopIsNotPacketSource && route.nextHopDeviceId != peer.deviceId) {
-                        // Hold other flood paths briefly while the shortest known route gets a try.
-                        // This remains unacknowledged so the normal queue query releases it at 8s.
+                    if (prior == null && route != null && nextHopConnected && nextHopIsNotPacketSource && route.nextHopDeviceId != peer.deviceId) {
+                        // Hold other flood paths once while the shortest known route gets a try.
+                        // The receipt this leaves means the packet goes out when released at 8s.
                         dao.putPeerReceipt(
                             com.slackers.emergencymesh.data.PeerReceiptEntity(
                                 packetId = queued.packetId,
