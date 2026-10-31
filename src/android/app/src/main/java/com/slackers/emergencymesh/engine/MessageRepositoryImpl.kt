@@ -54,6 +54,7 @@ class MessageRepositoryImpl(
     private var engineJob: Job? = null
     private var engineScope = scope
     private val peerLocks = mutableMapOf<String, Mutex>()
+    private val routeTable = RouteTable()
     private val _incomingCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     private val _answeredCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     private val _incomingQuestions = MutableSharedFlow<SpokenQuestion>(extraBufferCapacity = 8)
@@ -102,6 +103,7 @@ class MessageRepositoryImpl(
                 when (event) {
                     is TransportEvent.PeerConnected -> workers().launch { dispatchTo(event.peer) }
                     is TransportEvent.PacketReceived -> handleIncoming(event.fromEndpointId, event.packet)
+                    is TransportEvent.PeerDisconnected -> routeTable.forgetVia(event.deviceId)
                     else -> Unit
                 }
             }
@@ -265,6 +267,38 @@ class MessageRepositoryImpl(
                 // the remaining backlog instead of waiting for a stale batch to drain.
                 val queued = dao.dueOutgoingForPeer(peer.deviceId, now, limit = 1).firstOrNull() ?: break
                 val prior = dao.receipt(queued.packetId, peer.deviceId)
+                val packet = runCatching { PacketCodec.decode(queued.encodedPacket) }.getOrNull()
+                if (packet == null) {
+                    dao.deleteQueuedPacket(queued.packetId)
+                    continue
+                }
+
+                val recipientId = packet.recipientId
+                if (recipientId != null && recipientId != peer.deviceId) {
+                    val route = routeTable.routeTo(recipientId, now)
+                    val nextHopConnected = route?.let { routeInfo ->
+                        transport.peers.value.any {
+                            it.deviceId == routeInfo.nextHopDeviceId && it.state == PeerState.CONNECTED
+                        }
+                    } == true
+                    val nextHopIsNotPacketSource = route?.nextHopDeviceId != queued.receivedFromDeviceId
+                    if (route != null && nextHopConnected && nextHopIsNotPacketSource && route.nextHopDeviceId != peer.deviceId) {
+                        // Hold other flood paths briefly while the shortest known route gets a try.
+                        // This remains unacknowledged so the normal queue query releases it at 8s.
+                        dao.putPeerReceipt(
+                            com.slackers.emergencymesh.data.PeerReceiptEntity(
+                                packetId = queued.packetId,
+                                peerDeviceId = peer.deviceId,
+                                acknowledgedAtMillis = null,
+                                attemptCount = prior?.attemptCount ?: 0,
+                                nextAttemptAtMillis = now + ROUTE_FALLBACK_DELAY_MS,
+                            ),
+                        )
+                        dispatchLater(peer, ROUTE_FALLBACK_DELAY_MS)
+                        continue
+                    }
+                }
+
                 val attempt = (prior?.attemptCount ?: 0) + 1
                 val inFlightReceipt = com.slackers.emergencymesh.data.PeerReceiptEntity(
                     packetId = queued.packetId,
@@ -274,11 +308,6 @@ class MessageRepositoryImpl(
                     nextAttemptAtMillis = now + retryDelayMillis(attempt),
                 )
                 dao.putPeerReceipt(inFlightReceipt)
-                val packet = runCatching { PacketCodec.decode(queued.encodedPacket) }.getOrNull()
-                if (packet == null) {
-                    dao.deleteQueuedPacket(queued.packetId)
-                    continue
-                }
                 val sendResult = transport.send(peer.endpointId, packet)
                 dispatched++
                 // ACK packets have no app-level ACK of their own. A successful byte transfer is
@@ -320,6 +349,14 @@ class MessageRepositoryImpl(
         if (!sender.verified || !security.verify(sender, PacketCodec.signedBytes(packet), packet.signature)) return
 
         val now = nowMillis()
+        if (packet.senderId != localCard.deviceId) {
+            routeTable.learn(
+                destinationDeviceId = packet.senderId,
+                nextHopDeviceId = source.deviceId,
+                hopCount = packet.hopCount + 1,
+                nowMillis = now,
+            )
+        }
         val sourceReceipt = dao.receipt(packet.id, source.deviceId)
         dao.putPeerReceipt(
             com.slackers.emergencymesh.data.PeerReceiptEntity(
@@ -597,6 +634,7 @@ class MessageRepositoryImpl(
         const val CALL_OUT_MAX_AGE_MS = 5 * 60 * 1_000L
         const val DISPATCH_BATCH_SIZE = 32
         const val MAX_ACK_ATTEMPTS = 3
+        const val ROUTE_FALLBACK_DELAY_MS = 8_000L
         const val INITIAL_RETRY_MS = 1_000L
         const val MAX_RETRY_MS = 60_000L
         const val MAX_BACKOFF_SHIFT = 6

@@ -41,6 +41,69 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayEngineInMemoryMeshTest {
     @Test
+    fun routeTableKeepsTheFewestHopsAndExpiresRoutesAfterFiveMinutes() {
+        val routes = RouteTable()
+        routes.learn("D", "B", hopCount = 3, nowMillis = 1_000L)
+        routes.learn("D", "C", hopCount = 2, nowMillis = 2_000L)
+        routes.learn("D", "E", hopCount = 4, nowMillis = 3_000L)
+
+        assertEquals("C", routes.routeTo("D", nowMillis = 4_000L)?.nextHopDeviceId)
+        routes.learn("X", "B", hopCount = 1, nowMillis = 5_000L)
+        routes.forgetVia("B")
+        assertNull(routes.routeTo("X", nowMillis = 6_000L))
+        assertNull("A route expires at five minutes", routes.routeTo("D", nowMillis = 302_000L))
+    }
+
+    @Test
+    fun directMessageUsesShortestLearnedRouteThenFloodsAfterNextHopDisconnects() = runTest {
+        val mesh = InMemoryMesh()
+        val ids = listOf("A", "B", "C", "D", "E")
+        val phones = ids.associateWith(mesh::phone)
+        mesh.link("A", "B")
+        mesh.link("B", "D")
+        mesh.link("A", "C")
+        mesh.link("C", "E")
+        mesh.link("E", "D")
+
+        val daos = ids.associateWith { InMemoryEmergencyMeshDao() }
+        val repos = ids.associateWith { id ->
+            MessageRepositoryImpl(daos.getValue(id), phones.getValue(id), TestMessageSecurity(contact(id)), this)
+        }
+
+        try {
+            repos.values.forEach { it.startAndAwaitReady() }
+            ids.forEach { id ->
+                ids.filterNot { it == id }.forEach { other -> repos.getValue(id).saveContact(contact(other)) }
+            }
+
+            val warmupId = repos.getValue("A").sendDirect("D", "learn routes", Priority.P2_REGULAR)
+            runCurrent()
+            assertEquals(MessageStatus.DELIVERED.name, daos.getValue("A").message(warmupId)?.status)
+
+            val shortPathMessageId = repos.getValue("A").sendDirect("D", "take the short path", Priority.P2_REGULAR)
+            runCurrent()
+            val shortPath = mesh.sentLog.filter { it.packet.id == shortPathMessageId }
+                .map { it.fromDeviceId to it.toDeviceId }
+            assertEquals(listOf("A" to "B", "B" to "D"), shortPath)
+            assertEquals(MessageStatus.DELIVERED.name, daos.getValue("A").message(shortPathMessageId)?.status)
+
+            mesh.unlink("A", "B")
+            runCurrent()
+            val fallbackMessageId = repos.getValue("A").sendDirect("D", "flood after disconnect", Priority.P2_REGULAR)
+            runCurrent()
+            val fallbackReceived = requireNotNull(daos.getValue("D").message(fallbackMessageId))
+            assertEquals("flood after disconnect", PacketCodec.decodeBody(fallbackReceived.body).text)
+            val fallbackPath = mesh.sentLog.filter { it.packet.id == fallbackMessageId }
+                .map { it.fromDeviceId to it.toDeviceId }
+            assertTrue("The message falls back through the longer path", fallbackPath.contains("A" to "C"))
+            assertTrue(fallbackPath.contains("C" to "E"))
+            assertTrue(fallbackPath.contains("E" to "D"))
+        } finally {
+            repos.values.forEach { it.stop() }
+        }
+    }
+
+    @Test
     fun aToCMessageRelaysThroughBWithoutEchoingToA() = runTest {
         val mesh = InMemoryMesh()
         val transportA = mesh.phone("A")
