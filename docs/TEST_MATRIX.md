@@ -1,66 +1,66 @@
 # Requirement test matrix
 
-Status as of 31 October 2026, 03:10 IST. Update this from real results only.
+Status as of 31 October 2026, 12:53 IST. A requirement is **Pass** only where the cited real-phone test passed. **Partial** means that implementation exists but measurement or device coverage is incomplete.
 
-**Statuses:** a requirement is **Pass** only when it works in the real app on real phones. **Partial** means part of it is proven, and the Notes column says which part.
+## Required system
 
-| Requirement | Status | Proven so far | Still needed |
+| Requirement | Status | Real evidence | Remaining limit |
 | --- | --- | --- | --- |
-| 1. Offline communication | Partial | 3 phones exchanged packets with no internet, using the debug Mesh Test screen | Prove it in the real app |
-| 2. Peer-to-peer messaging | Partial | Discovery, code approval and two-way packets on vivo, Samsung and OnePlus | Prove it in the real app |
-| 3. Mesh relaying | Not built | The forced A-B-C radio layout works, with A-C blocked | Engine forwarding, then a real A-to-C test through B |
-| 4. SOS broadcasting | Not built | SOS screen exists, and the location flow is written | Engine sending, encrypted SOS and a denied-location test |
-| 5. Message prioritization | Not built | Priority fields and queue storage exist | Priority dispatch, then the 20-message test |
-| 6. Delivery status | Not built | Status labels and screen exist | Real acknowledgements driving each status |
-| Security | Partial | Tink passed 88 unit tests and 10 device tests on `member4/security` | Connect to the engine, then prove a relay can't read on real phones |
-| 7. Battery efficiency | Partial | Burst scanning ran on real phones | Finish the balanced vs continuous comparison |
-| 8. Recovery and synchronization | Partial | Radio reconnect works, and Pending storage survives a database reopen on a Samsung | Automatic queued delivery after reconnect |
+| 1. Offline communication | **Pass** | Three phones exchanged real app messages in airplane mode with Wi-Fi off; each printed `Network is unreachable` before and after | The later extras run was not fully offline |
+| 2. Peer-to-peer messaging | **Pass** | vivo, Samsung and OnePlus connected and exchanged encrypted direct messages | Android only; Google Play services required |
+| 3. Mesh relaying | **Pass** | A reached C through B with A-C blocked; both directions delivered in about 2.6 seconds and showed 1 hop | One relay hop tested on real phones |
+| 4. SOS broadcasting | **Pass** | SOS reached both phones through the forced topology, worked with location denied and used continuous scanning while active | A real indoor location fix was unavailable |
+| 5. Message prioritization | **Pass** | SOS arrived before 20 queued regular messages; regular messages then arrived in order | Test used three phones |
+| 6. Delivery status | **Pass** | Pending, Sent, Relayed and Delivered appeared with sender-side recorded times | Messages created before timestamp support can have blank historical times |
+| Security | **Pass for tested build** | Tink was integrated; relay storage contained no tested message text; a packet with an invalid signature was rejected | No independent security review or forward secrecy |
+| 7. Battery efficiency | **Partial** | Balanced and Continuous scan modes worked; foreground keep-alive worked on Samsung and on vivo after settings changes | No battery comparison; OnePlus froze the app while locked |
+| 8. Recovery and synchronization | **Pass** | A Pending message survived restart, delivered after reconnect and appeared exactly once | Reconnect took up to about 40 seconds in one run |
 
-## Expected output
+## Optional extras
 
-| Item | Status | Notes |
-| --- | --- | --- |
-| Offline peer-to-peer application | Partial | App screens exist, but the app can't send yet |
-| Multi-hop mesh relaying | Not built | Depends on the engine |
-| Encrypted SOS broadcasting | Partial | Tink works in tests, but SOS sending isn't built |
-| Real-time delivery status | Not built | Depends on acknowledgements |
-| Battery-optimized discovery | Partial | Built, not measured |
-| Optional online AI dashboard | Not built | Cut from the current plan. The statement marks this as optional |
+| Extra | Status | What passed | Limit of the proof |
+| --- | --- | --- | --- |
+| Background keep-alive | **Partial** | Locked Samsung relayed with no setup; vivo relayed after a background-power setting | OnePlus froze even after exemptions; deep Doze was not reached |
+| Locked-phone alerts | **Pass in tested cases** | Direct-message and SOS notifications appeared with direct text hidden | Not tested on every phone and state |
+| Rescue Call-Out | **Pass in tested cases** | Locked Samsung rang and flashed; volume and torch were restored; rescuer saw confirmation | Relayed calls have unit-test proof only; silent mode and Stop ringing untested |
+| Talk-Back | **Pass, rough recognition** | Samsung spoke a question, listened and replied without touch | Recognition was poor; Hindi and Telugu untested |
+| Last Breath | **Pass with simulated battery** | One final SOS sent at simulated 4%, with no repeat at 3% or 2% | Battery level was faked with `dumpsys battery` |
+| No-app SOS | **Pass in simulation** | Bluetooth-name SOS crossed the mesh and was marked unverified | Sender still had the app installed; a true no-app phone and iPhone are untested |
+| Laptop node | **Pass over USB path** | With radio links blocked, messages delivered both ways through the laptop; its database contained no tested message text | `adb reverse` carried traffic; real phone-to-laptop Wi-Fi is untested |
+| Dashboard upload | **Pass over USB path** | SOS appeared in under a second; duplicates collapsed; direct messages stayed off the dashboard | Wrong token and dashboard outage untested |
+| AI dashboard | **Implemented, model untested** | Dashboard UI, safe fallback and 70 tests passed against a fake Featherless server | No real model key was available; accuracy is not measured |
+
+## Latest required-build checks
+
+| Check | Result |
+| --- | --- |
+| Build | `d0f2b0f`, combining the status UI and M3 engine timestamps |
+| Unit tests | 119 of 119 passed on debug and release |
+| Phones | vivo V2404 (Android 16), Samsung SM-S721B (Android 16), OnePlus CPH2569 (Android 15) |
+| Database upgrade | Existing data survived install on vivo and OnePlus |
+| Status timeline | All four stages displayed for `merged71` |
+| SOS scanning | Balanced before SOS, Continuous while active, Balanced after ending |
+| Key-change warning | Warning appeared and the stored key was kept |
+| Stability | Zero app crash lines on all three phones during the final required-build run |
 
 ## Evidence
 
-| Evidence | Result |
-| --- | --- |
-| [Two-phone offline exchange](evidence/g1-two-phone-offline.md) | Passed |
-| [Forced three-phone topology](evidence/three-phone-topology.md) | Passed, one hop only |
-| [Security tests](evidence/tink-security.md), on `member4/security` | Passed, not integrated |
-| Room restart test | Passed on a Samsung |
-| Real app smoke test | Passed on a Samsung, on 31 October at 03:10 IST: all 4 tabs opened with no crash |
-| Denied nearby permissions | Passed on a Samsung: the app showed 4 missing permissions and didn't start discovery |
+- [Final required build](evidence/final-build.md)
+- [Required feature run](evidence/required-features.md)
+- [Extras phone test](evidence/extras-phone-test.md)
+- [A-to-C relay](evidence/relay-a-to-c.md)
+- [Encrypted messaging](evidence/encrypted-messaging.md)
+- [Contact exchange](evidence/contact-exchange.md)
+- [Security tests](evidence/tink-security.md)
 
-## Phones tested
+## Still unmeasured or unproven
 
-| Phone | Android | Used for |
-| --- | --- | --- |
-| vivo V2404 | 16 | Radio tests |
-| Samsung SM-S721B | 16 | Radio, Room and Keystore tests |
-| OnePlus CPH2569 | 15 | Radio tests |
-
-## Tests to run next
-
-| Test | Depends on | Pass when |
-| --- | --- | --- |
-| Install and permissions on vivo and OnePlus | Nothing | App opens, and denied permissions show a clear message |
-| Discovery and pairing in the real app | Nothing | Phones pair after comparing the code |
-| Contact enrollment | M2 and M3 | Both phones show matching fingerprints, then mark each other verified |
-| Direct message offline | M2 and M3 | Text arrives once, and status reaches Delivered |
-| A-to-C relay through B | M2 and M3 | B's log shows forwarding, and A-C stays disconnected |
-| Pending to Delivered | M3 | Isolated message stays Pending, survives restart, then delivers once |
-| SOS priority | M3 | SOS arrives before 20 queued regular messages |
-| SOS with location denied | M2 and M3 | SOS sends, with no invented coordinates |
-| Relay can't read | M4 integration | B holds ciphertext only, and C reads the message |
-| Tampered packet | M4 integration | Packet is rejected and logged |
-| Battery comparison | Nothing | Same phones, unplugged, 30 minutes per mode, with real numbers recorded |
+- Battery consumption and comparison between scan modes
+- Indoor and outdoor range, until M4 records the current range run
+- More than one relay hop on real phones
+- Real AI model output or accuracy
+- Real Wi-Fi transport between phones and the laptop node
+- Reliable background operation across all Android brands
 
 ## Bug report format
 
