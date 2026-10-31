@@ -62,6 +62,9 @@ sealed interface TransportEvent {
 sealed interface SendResult {
     /** Nearby finished the byte transfer. This is not app-level receipt, and is not status SENT. */
     data object TransportComplete : SendResult
+
+    /** A relay node took custody. It never sends receipts, so retrying it would be wasted work. */
+    data object Stored : SendResult
     data class Failed(val reason: String) : SendResult
 }
 

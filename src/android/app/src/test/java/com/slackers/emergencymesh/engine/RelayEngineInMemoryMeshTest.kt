@@ -355,7 +355,7 @@ class RelayEngineInMemoryMeshTest {
     }
 
     /** In-memory DAO keeps this unit test independent from Android and Room runtime. */
-    private class InMemoryEmergencyMeshDao : EmergencyMeshDao {
+    internal class InMemoryEmergencyMeshDao : EmergencyMeshDao {
         private val contacts = linkedMapOf<String, ContactEntity>()
         private val messages = linkedMapOf<String, MessageEntity>()
         private val packets = linkedMapOf<String, QueuedPacketEntity>()

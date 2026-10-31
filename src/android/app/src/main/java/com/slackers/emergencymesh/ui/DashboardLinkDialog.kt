@@ -28,7 +28,7 @@ import com.slackers.emergencymesh.background.DashboardLink
 internal fun DashboardLinkDialog(
     current: DashboardLink?,
     error: String?,
-    onSave: (url: String, token: String, includeStoredAlerts: Boolean) -> Unit,
+    onSave: (url: String, token: String, includeStoredAlerts: Boolean, useAsNode: Boolean) -> Unit,
     onTurnOff: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -36,6 +36,7 @@ internal fun DashboardLinkDialog(
     // Intentionally not rememberSaveable: a secret is never written to saved UI state.
     var token by remember { mutableStateOf(current?.token.orEmpty()) }
     var includeStoredAlerts by remember { mutableStateOf(false) }
+    var useAsNode by remember { mutableStateOf(current?.useAsNode == true) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Dashboard upload") },
@@ -66,12 +67,17 @@ internal fun DashboardLinkDialog(
                     Checkbox(checked = includeStoredAlerts, onCheckedChange = { includeStoredAlerts = it })
                     Text("Also upload older alerts stored on this phone", Modifier.padding(top = 12.dp))
                 }
+                Row {
+                    Checkbox(checked = useAsNode, onCheckedChange = { useAsNode = it })
+                    Text("Also carry mesh messages through this laptop", Modifier.padding(top = 12.dp))
+                }
+                if (useAsNode) Text("The laptop can't read what it carries, but it can see which phones are talking.")
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             Button(enabled = url.isNotBlank() && token.isNotBlank(),
-                onClick = { onSave(url, token, includeStoredAlerts) }) { Text("Turn on") }
+                onClick = { onSave(url, token, includeStoredAlerts, useAsNode) }) { Text("Turn on") }
         },
         dismissButton = {
             if (current != null) TextButton(onClick = onTurnOff) { Text("Turn off") }

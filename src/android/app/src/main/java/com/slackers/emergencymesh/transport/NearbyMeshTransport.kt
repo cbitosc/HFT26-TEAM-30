@@ -8,6 +8,7 @@ import com.slackers.emergencymesh.core.MalformedPacketException
 import com.slackers.emergencymesh.core.MeshTransport
 import com.slackers.emergencymesh.core.Packet
 import com.slackers.emergencymesh.core.PacketCodec
+import com.slackers.emergencymesh.core.PacketType
 import com.slackers.emergencymesh.core.PeerInfo
 import com.slackers.emergencymesh.core.PeerState
 import com.slackers.emergencymesh.core.SendResult
@@ -43,6 +44,7 @@ class NearbyMeshTransport internal constructor(
     private val dispatcher: CoroutineDispatcher,
     private val config: TransportConfig = TransportConfig(),
     private val logSink: (String) -> Unit = {},
+    private val relayNode: RelayNode? = null,
 ) : MeshTransport {
 
     private class Entry(
@@ -69,6 +71,7 @@ class NearbyMeshTransport internal constructor(
     private var running = false
     private var discovering = false
     private var discoveryJob: Job? = null
+    private var relayJob: Job? = null
     private var mode = DiscoveryMode.BALANCED
     private var localDeviceId = ""
     private var endpointName = ""
@@ -132,12 +135,14 @@ class NearbyMeshTransport internal constructor(
             }
         }
         restartDiscovery()
+        startRelayNode()
     }
 
     override fun stop() {
         if (!running) return
         running = false
         discoveryJob?.cancel()
+        relayJob?.cancel()
         connectJobs.values.forEach(Job::cancel)
         connectJobs.clear()
         stopDiscovery()
@@ -178,6 +183,7 @@ class NearbyMeshTransport internal constructor(
             if (entry?.state != PeerState.CONNECTED) {
                 return@withContext SendResult.Failed("Not connected to $endpointId")
             }
+            if (endpointId == RELAY_ENDPOINT_ID) return@withContext sendToRelayNode(packet, bytes)
             val payload = radio.preparePayload(bytes)
             val pending = PendingSend(endpointId, CompletableDeferred())
             pendingSends[payload.id] = pending
@@ -193,12 +199,51 @@ class NearbyMeshTransport internal constructor(
             result
         }
 
+    /** Contact cards are for direct neighbors. A relay node has no identity to swap. */
+    private suspend fun sendToRelayNode(packet: Packet, bytes: ByteArray): SendResult {
+        if (packet.type == PacketType.CONTACT_CARD) return SendResult.TransportComplete
+        val node = relayNode ?: return SendResult.Failed("No relay node")
+        val expiresAtMillis = packet.createdAtMillis + packet.retentionSeconds * 1_000L
+        val stored = node.store(localDeviceId, packet.id, bytes, expiresAtMillis)
+        log("Relay node ${if (stored) "stored" else "refused"} ${packet.summary()}")
+        return if (stored) SendResult.Stored else SendResult.Failed("Relay node refused")
+    }
+
+    private fun startRelayNode() {
+        val node = relayNode ?: return
+        relayJob = scope.launch {
+            while (isActive) {
+                val packets = node.fetch(localDeviceId)
+                updateRelayLink(packets != null)
+                packets?.forEach { handleBytes(RELAY_ENDPOINT_ID, it) }
+                delay(if (packets != null) config.relayPollMillis else config.relayRetryMillis)
+            }
+        }
+    }
+
+    /** The engine treats a reachable node as one more neighbor, so nothing above this changes. */
+    private fun updateRelayLink(reachable: Boolean) {
+        val linked = entries.containsKey(RELAY_ENDPOINT_ID)
+        if (reachable == linked) return
+        if (reachable) {
+            val entry = Entry(RELAY_ENDPOINT_ID, RELAY_DEVICE_ID, RELAY_NAME, PeerState.CONNECTED)
+            entries[RELAY_ENDPOINT_ID] = entry
+            emit(TransportEvent.PeerConnected(entry.toPeerInfo()))
+        } else {
+            entries.remove(RELAY_ENDPOINT_ID)
+            emit(TransportEvent.PeerDisconnected(RELAY_ENDPOINT_ID, RELAY_DEVICE_ID))
+        }
+        publishPeers()
+        log("$RELAY_NAME ${if (reachable) "connected" else "disconnected"}")
+    }
+
     override fun setDebugAllowlist(deviceIds: Set<String>?) {
         allowlist = deviceIds
         store.saveDebugAllowlist(deviceIds)
         log("Debug allowlist: ${deviceIds?.joinToString { it.short() } ?: "off"}")
         rejectedDevices.clear()
-        entries.values.filterNot { isAllowed(it.deviceId) }.forEach { entry ->
+        // This filter shapes radio links for testing, and a relay node isn't a radio link.
+        entries.values.filterNot { isAllowed(it.deviceId) || it.endpointId == RELAY_ENDPOINT_ID }.forEach { entry ->
             connectJobs.remove(entry.deviceId)?.cancel()
             if (entry.isActive()) radio.disconnect(entry.endpointId)
             failSends(entry.endpointId, "Blocked by debug allowlist")
@@ -453,7 +498,10 @@ class NearbyMeshTransport internal constructor(
             .forEach { it.result.complete(SendResult.Failed(reason)) }
     }
 
-    private fun connectedCount() = entries.values.count { it.state == PeerState.CONNECTED }
+    /** A relay node doesn't count, because a phone should still look for phones it can reach. */
+    private fun connectedCount() = entries.values.count {
+        it.state == PeerState.CONNECTED && it.endpointId != RELAY_ENDPOINT_ID
+    }
 
     private fun isAllowed(deviceId: String) = policy.isAllowed(allowlist, deviceId)
 
@@ -503,18 +551,23 @@ class NearbyMeshTransport internal constructor(
 
     private fun SendResult.describe() = when (this) {
         SendResult.TransportComplete -> "transfer complete"
+        SendResult.Stored -> "stored"
         is SendResult.Failed -> "failed, $reason"
     }
 
     companion object {
         private const val MAX_LOG_ENTRIES = 300
         private const val TIMEOUT_CODE = -2
+        private const val RELAY_ENDPOINT_ID = "relay-node"
+        private const val RELAY_DEVICE_ID = "laptop-node"
+        private const val RELAY_NAME = "Laptop node"
 
-        fun create(context: Context): NearbyMeshTransport = NearbyMeshTransport(
+        fun create(context: Context, relayNode: RelayNode? = null): NearbyMeshTransport = NearbyMeshTransport(
             radio = GmsNearbyRadio(context),
             store = PrefsPeerStore(context),
             dispatcher = Dispatchers.Main.immediate,
             logSink = { Log.d("EmergencyMesh", it) },
+            relayNode = relayNode,
         )
     }
 }

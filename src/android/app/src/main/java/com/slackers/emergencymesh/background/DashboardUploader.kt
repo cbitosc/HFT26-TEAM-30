@@ -29,7 +29,12 @@ private const val MAX_SENDER_CHARS = 64
 private const val STATUS_OFF = "Off. No alerts leave this phone."
 
 /** Where this phone uploads SOS alerts. Nothing leaves the phone until someone sets this up. */
-data class DashboardLink(val url: String, val token: String, val sinceMillis: Long)
+data class DashboardLink(
+    val url: String,
+    val token: String,
+    val sinceMillis: Long,
+    val useAsNode: Boolean = false,
+)
 
 internal sealed interface UploadOutcome {
     data object Accepted : UploadOutcome
@@ -160,10 +165,16 @@ class DashboardConnection internal constructor(
     val link: StateFlow<DashboardLink?> get() = store.link
     val status: StateFlow<String> get() = uploader.status
 
-    fun save(url: String, token: String, includeStoredAlerts: Boolean, nowMillis: Long): Boolean {
+    fun save(
+        url: String,
+        token: String,
+        includeStoredAlerts: Boolean,
+        useAsNode: Boolean,
+        nowMillis: Long,
+    ): Boolean {
         val target = normalizeDashboardUrl(url) ?: return false
         val since = if (includeStoredAlerts) 0L else nowMillis
-        store.save(DashboardLink(target, token.trim(), since))
+        store.save(DashboardLink(target, token.trim(), since, useAsNode))
         return true
     }
 
@@ -171,11 +182,10 @@ class DashboardConnection internal constructor(
 
     companion object {
         internal fun start(
-            context: Context,
+            store: DashboardLinkStore,
             repository: MessageRepository,
             scope: CoroutineScope,
         ): DashboardConnection {
-            val store = DashboardLinkStore(context)
             val uploader = DashboardUploader(
                 alerts = repository.sosAlerts.catch { emit(emptyList()) },
                 contacts = repository.contacts.catch { emit(emptyList()) },
@@ -201,6 +211,7 @@ internal class DashboardLinkStore(context: Context) {
                 putString("url", target.url)
                 putString("token", target.token)
                 putLong("since_millis", target.sinceMillis)
+                putBoolean("use_as_node", target.useAsNode)
             }
         }.apply()
         _link.value = target
@@ -209,7 +220,12 @@ internal class DashboardLinkStore(context: Context) {
     private fun read(): DashboardLink? {
         val url = preferences.getString("url", null) ?: return null
         val token = preferences.getString("token", "").orEmpty()
-        return DashboardLink(url, token, preferences.getLong("since_millis", 0L))
+        return DashboardLink(
+            url = url,
+            token = token,
+            sinceMillis = preferences.getLong("since_millis", 0L),
+            useAsNode = preferences.getBoolean("use_as_node", false),
+        )
     }
 }
 

@@ -21,9 +21,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from assistant import DEFAULT_BASE_URL, DEFAULT_MODEL, LANGUAGES, Assistant, AssistantUnavailable
+from mesh_node import InvalidPacket, MeshNode, NodeFull, clean_packet, node_reply
 from store import AlertStore, InvalidAlert, clean_alert
 from triage import URGENCIES, rank
 
@@ -31,6 +32,7 @@ HERE = Path(__file__).resolve().parent
 MAX_BODY_BYTES = 256 * 1024
 MAX_ALERTS_PER_UPLOAD = 100
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+MAX_DEVICE_ID_CHARS = 64
 
 
 def load_env(path: Path) -> Dict[str, str]:
@@ -106,10 +108,17 @@ class Analyst:
 
 
 class Dashboard:
-    def __init__(self, store: AlertStore, analyst: Analyst, upload_token: Optional[str]) -> None:
+    def __init__(
+        self,
+        store: AlertStore,
+        analyst: Analyst,
+        upload_token: Optional[str],
+        node: MeshNode,
+    ) -> None:
         self.store = store
         self.analyst = analyst
         self.upload_token = upload_token
+        self.node = node
 
     def state(self) -> Dict[str, Any]:
         alerts = rank(self.store.all())
@@ -122,6 +131,7 @@ class Dashboard:
             "languages": LANGUAGES,
             "urgencies": URGENCIES,
             "counts": counts,
+            "node": self.node.stats(),
             "alerts": alerts,
         }
 
@@ -166,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Requests could reveal who is asking for help, so nothing is logged.
 
     def do_GET(self) -> None:
+        if urlsplit(self.path).path == "/mesh/packets":
+            return self._hand_out_packets()
         if not self._from_this_laptop():
             return self._reply(403, {"error": "Open the dashboard on this laptop"})
         if self.path in ("/", "/index.html"):
@@ -186,13 +198,38 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._may_upload():
                     return self._reply(401, {"error": "Upload token is missing or wrong"})
                 return self._reply(200, self.dashboard.upload(payload))
+            if self.path == "/mesh/packets":
+                return self._take_packet(payload)
             if not self._from_this_laptop():
                 return self._reply(403, {"error": "Open the dashboard on this laptop"})
             self._route(payload)
-        except InvalidAlert as problem:
+        except (InvalidAlert, InvalidPacket) as problem:
             self._reply(400, {"error": str(problem)})
         except ValueError:
             self._reply(400, {"error": "Invalid JSON"})
+
+    def _take_packet(self, payload: Any) -> None:
+        if not self._may_upload():
+            return self._reply(401, {"error": "Upload token is missing or wrong"})
+        try:
+            stored = self.dashboard.node.store(clean_packet(payload, time.time()))
+        except NodeFull:
+            return self._reply(507, {"error": "This node is full"})
+        self._reply(200, {"stored": stored})
+
+    def _hand_out_packets(self) -> None:
+        if not self._may_upload():
+            return self._reply(401, {"error": "Upload token is missing or wrong"})
+        query = parse_qs(urlsplit(self.path).query)
+        device = query.get("device", [""])[0]
+        try:
+            after = int(query.get("after", ["0"])[0])
+        except ValueError:
+            after = -1
+        if not 0 < len(device) <= MAX_DEVICE_ID_CHARS or after < 0:
+            return self._reply(400, {"error": "Invalid request"})
+        cursor, packets = self.dashboard.node.fetch(device, after)
+        self._send(200, node_reply(cursor, packets), "text/plain; charset=ascii")
 
     def _route(self, payload: Any) -> None:
         if self.path == "/api/samples":
@@ -277,9 +314,10 @@ def build_server(
     store: AlertStore,
     assistant: Assistant,
     upload_token: Optional[str],
+    node: MeshNode,
 ) -> ThreadingHTTPServer:
     analyst = Analyst(store, assistant)
-    dashboard = Dashboard(store, analyst, upload_token)
+    dashboard = Dashboard(store, analyst, upload_token, node)
     handler = type("BoundHandler", (Handler,), {"dashboard": dashboard})
     server = QuickServer((host, port), handler)
     analyst.start()
@@ -313,7 +351,9 @@ def main() -> None:
         base_url=settings.get("FEATHERLESS_BASE_URL") or DEFAULT_BASE_URL,
     )
     host = "0.0.0.0" if options.lan else "127.0.0.1"
-    server = build_server(host, options.port, AlertStore(options.db), assistant, token)
+    server = build_server(
+        host, options.port, AlertStore(options.db), assistant, token, MeshNode(options.db),
+    )
     print("Dashboard: http://127.0.0.1:%d" % options.port)
     if options.lan:
         print("Phones upload to: http://%s:%d" % (lan_address(), options.port))

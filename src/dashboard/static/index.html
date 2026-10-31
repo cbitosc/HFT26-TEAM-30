@@ -102,6 +102,10 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); o
       <h2>Waiting for review</h2>
       <div id="counts"></div>
     </section>
+    <section class="panel" aria-label="Laptop mesh node">
+      <h2>Mesh node</h2>
+      <p class="note" id="node">No phones connected</p>
+    </section>
     <section class="panel stack" aria-label="Sample data">
       <h2>Sample data</h2>
       <p class="note">Practice alerts for the demo. They are marked on every card.</p>
@@ -294,6 +298,11 @@ function render(state) {
     row.append(el("span", "", title(name)), el("b", "", String(state.counts[name])));
     return row;
   }));
+
+  const { phones, packets } = state.node;
+  document.getElementById("node").textContent = phones
+    ? `Carrying ${packets === 1 ? "1 packet" : `${packets} packets`} for ${phones === 1 ? "1 phone" : `${phones} phones`}. This laptop can't read them.`
+    : packets ? `Holding ${packets === 1 ? "1 packet" : `${packets} packets`} until a phone connects.` : "No phones connected";
 
   const running = state.ai.state === "on";
   const alerts = document.getElementById("alerts");

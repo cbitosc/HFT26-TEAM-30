@@ -8,7 +8,7 @@ The mesh never depends on this. Phones work the same with it switched off.
 
 | Check | Result |
 | --- | --- |
-| Tests | 54 pass, using a fake Featherless server |
+| Tests | 70 pass, using a fake Featherless server |
 | Page | Checked in a browser with the fake server, including AI failure, phone width and light mode |
 | Real Featherless model | **Not tested yet.** No key was available |
 | Accuracy | **Not measured yet.** Run `evaluate.py` once you have a key |
@@ -77,6 +77,19 @@ curl -H 'Content-Type: application/json' -H 'X-Upload-Token: <token>' \
 ```
 
 **Plain HTTP isn't encrypted.** Anyone on the same network can read uploads and the token, so use a private hotspot for the demo.
+
+## Use this laptop as a mesh node
+
+A laptop can't run Nearby Connections, so phones reach it over Wi-Fi instead. It stores each packet and passes it to the other phones, which lets 2 phones exchange messages when they're out of radio range of each other.
+
+Run `python3 dashboard.py --lan`. On each phone, open **Debug**, then **Set up dashboard upload**, and tick **Also carry mesh messages through this laptop**.
+
+- **It can't read what it carries.** It holds no keys, and phones still check every signature against the original sender.
+- **It can see who is talking.** Sender and recipient IDs aren't encrypted, so treat that as private. It can also refuse to pass packets on.
+- **It needs a shared network.** The mesh itself never depends on it, so losing the laptop only loses this one link.
+- **Packets stay in `dashboard.db`** until they expire, for 25 hours at most.
+
+See `docs/LAPTOP_NODE_TEST.md` for what has been proven, and the phone test.
 
 ## Test it
 
