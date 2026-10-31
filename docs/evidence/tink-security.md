@@ -1,5 +1,7 @@
 # Security evidence
 
+Later update: the app now uses this provider. See [encrypted-messaging.md](encrypted-messaging.md) for the two-phone test.
+
 **Result: the Tink provider passed its unit and device tests. It isn't integrated yet.** The message engine doesn't call it so far, so no secure message has crossed real phones.
 
 | Detail | Value |

@@ -10,7 +10,7 @@ EmergencyMesh is an Android prototype for messages and SOS alerts when cellular 
 - Google Nearby Connections discovers peers. An intermediate phone forwards a packet and returns a delivery acknowledgement.
 - Direct messages learn a route from verified traffic and try the fewest-hop path first, with an eight-second flood fallback. SOS and signed area alerts continue to flood.
 - User, Responder and Admin controls work offline. A responder can send an area alert; an admin sees an SOS's distance and direction if it includes a recent location.
-- Google Tink and Android Keystore protect content and identity. See [security evidence](evidence/tink-security.md).
+- Google Tink and Android Keystore protect content and identity. See [security evidence](evidence/tink-security.md) and the [two-phone encrypted messaging test](evidence/encrypted-messaging.md).
 - Optional tools include foreground relay, Call-Out and Talk-Back, a low-battery SOS, Bluetooth-name SOS intake, a laptop node and an SOS dashboard. Dashboard AI was disabled during the phone test.
 
 ## Setup and demo
@@ -46,6 +46,8 @@ Add final APK screenshots only after they are captured and checked.
 Delivery requires available nearby phones. Locked relay depends on brand and battery policy. Battery drain and physical range have not been measured in the cited evidence. The extras run was not fully offline because A stayed on an internet hotspot; the core final-build test was fully offline. Real laptop Wi-Fi and a real phone without the app were not tested. A live AI model was not evaluated.
 
 Mentor changes used indoor debug test locations, not real GPS boundaries. A phone without location displays an area alert rather than hiding it. An SOS carries a location only if its phone has a fix from the last two minutes. Routing was checked on three real phones and five simulated phones, not 1,000; an initial message to a new peer still spreads through all paths.
+
+SOS is readable by phones holding the group code. There has been no independent security review and no forward secrecy.
 
 ## Submission check
 

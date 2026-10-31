@@ -57,6 +57,7 @@ Screenshots: [vivo](evidence/three-phone-A-vivo.png), [Samsung](evidence/three-p
 - Battery drain and physical range were not measured in these evidence files. AI accuracy and a real phone without the app were not tested.
 - Routing was tested on 3 real phones and 5 simulated phones, not 1,000. The first message to a new phone still spreads through all paths.
 - Area alerts used indoor debug test locations, not real GPS boundaries. An SOS carries a location only when the phone had a fix in the last 2 minutes.
+- SOS is readable by phones holding the group code. There has been no independent security review and no forward secrecy.
 
 ## 6. What the mentors asked and what we changed
 
