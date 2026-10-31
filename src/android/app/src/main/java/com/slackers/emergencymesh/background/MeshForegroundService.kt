@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,13 +18,16 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import com.slackers.emergencymesh.MainActivity
 import com.slackers.emergencymesh.core.DiscoveryMode
+import com.slackers.emergencymesh.core.MessageBody
 import com.slackers.emergencymesh.core.PeerState
 import com.slackers.emergencymesh.transport.LocalDevice
 import com.slackers.emergencymesh.ui.AppServices
 import com.slackers.emergencymesh.ui.SosScanSessionStore
 import com.slackers.emergencymesh.ui.missingNearbyPermissions
+import com.slackers.emergencymesh.ui.recentLocation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -32,13 +36,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Keeps the process and CPU awake while the user has the mesh on, including with the screen off.
@@ -147,6 +156,7 @@ class MeshForegroundService : Service() {
             launch { alertNewMessages(services) }
             launch { ringWhenCalled(services) }
             launch { watchBattery(services) }
+            launch { listenForNoAppSos(services) }
             combine(session.running, services.transport.peers, session.problem) { running, peers, problem ->
                 if (running) meshStatusText(
                     connected = peers.count { it.state == PeerState.CONNECTED },
@@ -224,6 +234,60 @@ class MeshForegroundService : Service() {
             receiver,
             IntentFilter(Intent.ACTION_BATTERY_CHANGED),
             ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        awaitClose { unregisterReceiver(receiver) }
+    }
+
+    private suspend fun listenForNoAppSos(services: AppServices) {
+        val repository = services.repository ?: return
+        val control = services.noApp ?: return
+        val detector = NoAppSosDetector()
+        control.listening.collectLatest { listening ->
+            if (!listening) return@collectLatest
+            coroutineScope {
+                launch {
+                    bluetoothNames().collect { heard ->
+                        val text = detector.heard(heard.address, heard.name) ?: return@collect
+                        // A storage failure here must not take the relay down.
+                        runCatching {
+                            val location = withContext(Dispatchers.IO) { recentLocation(this@MeshForegroundService) }
+                            repository.sendSos(
+                                MessageBody(
+                                    text = text,
+                                    latitude = location?.latitude,
+                                    longitude = location?.longitude,
+                                    accuracyMeters = location?.takeIf { it.hasAccuracy() }?.accuracy,
+                                    locationTimeMillis = location?.time,
+                                ),
+                            )
+                            control.alertSent()
+                        }
+                    }
+                }
+                while (isActive) {
+                    control.scanOnce()
+                    delay(NO_APP_SCAN_MILLIS)
+                }
+            }
+        }
+    }
+
+    private fun bluetoothNames(): Flow<HeardName> = callbackFlow {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val device = IntentCompat.getParcelableExtra(
+                    intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java,
+                ) ?: return
+                trySend(HeardName(device.address, intent.getStringExtra(BluetoothDevice.EXTRA_NAME)))
+            }
+        }
+        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND).apply {
+            // A name can arrive after the device does, in a separate update.
+            addAction(BluetoothDevice.ACTION_NAME_CHANGED)
+        }
+        // Exported because these come from the Bluetooth app, and only it may send these actions.
+        ContextCompat.registerReceiver(
+            this@MeshForegroundService, receiver, filter, ContextCompat.RECEIVER_EXPORTED,
         )
         awaitClose { unregisterReceiver(receiver) }
     }

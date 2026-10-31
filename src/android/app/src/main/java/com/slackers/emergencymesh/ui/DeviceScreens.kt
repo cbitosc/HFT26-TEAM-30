@@ -44,6 +44,11 @@ internal fun NearbyScreen(
     permissionFeedback: String?,
     radioProblems: List<String>,
     batteryRestricted: Boolean,
+    noAppAvailable: Boolean,
+    noAppListening: Boolean,
+    noAppAlerts: Int,
+    onNoAppListening: (Boolean) -> Unit,
+    onNoAppReply: () -> Unit,
     discoveryMode: DiscoveryMode,
     canRename: Boolean,
     onRename: (String) -> Unit,
@@ -112,6 +117,24 @@ internal fun NearbyScreen(
         if (batteryRestricted) item {
             Notice("Background relay", "Battery optimization can stop relaying while this phone is locked.")
             TextButton(onClick = onAllowBackground) { Text("Allow background relay") }
+        }
+        if (noAppAvailable) item {
+            Text("PHONES WITHOUT THE APP", style = MaterialTheme.typography.labelLarge)
+            Text("Someone without this app can rename their Bluetooth to start with SOS, such as \"SOS 3 TRAPPED FLOOR2\", and stay on their Bluetooth screen. This phone then adds an unverified SOS to the mesh, with this phone's recent location if available. Listening uses more battery.",
+                style = MaterialTheme.typography.bodySmall)
+            Text(when {
+                !noAppListening -> "Not listening."
+                !discoveryRequested -> "Listening starts when the mesh is on."
+                noAppAlerts == 0 -> "Listening. No requests heard yet."
+                noAppAlerts == 1 -> "Listening. 1 alert sent."
+                else -> "Listening. $noAppAlerts alerts sent."
+            }, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onNoAppListening(!noAppListening) }) {
+                    Text(if (noAppListening) "Stop listening" else "Listen for SOS names")
+                }
+                TextButton(onClick = onNoAppReply) { Text("Reply by name") }
+            }
         }
         item {
             Text("DISCOVERY MODE", style = MaterialTheme.typography.labelLarge)

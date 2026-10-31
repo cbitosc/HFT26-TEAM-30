@@ -1,6 +1,8 @@
 package com.slackers.emergencymesh.ui
 
 import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -47,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.slackers.emergencymesh.background.REPLY_SECONDS
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.ContactKeyWarning
@@ -116,6 +119,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var topologyOpen by remember { mutableStateOf(false) }
     var dashboardOpen by remember { mutableStateOf(false) }
     var dashboardError by remember { mutableStateOf<String?>(null) }
+    var replyOpen by remember { mutableStateOf(false) }
+    var replyError by remember { mutableStateOf<String?>(null) }
     var topologyError by remember { mutableStateOf<String?>(null) }
     var debugAllowlist by remember(services) { mutableStateOf(services?.readDebugAllowlist?.invoke()) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
@@ -202,6 +207,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val radioEntries by radioLogFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val dashboardStatusFlow = remember(services) { services?.dashboard?.status ?: MutableStateFlow(null) }
     val dashboardStatus by dashboardStatusFlow.collectAsStateWithLifecycle()
+    val noAppListeningFlow = remember(services) { services?.noApp?.listening ?: MutableStateFlow(false) }
+    val noAppListening by noAppListeningFlow.collectAsStateWithLifecycle()
+    val noAppAlertsFlow = remember(services) { services?.noApp?.alertsSent ?: MutableStateFlow(0) }
+    val noAppAlerts by noAppAlertsFlow.collectAsStateWithLifecycle()
     val connected = peers.count { it.state == PeerState.CONNECTED }
 
     fun nameOf(deviceId: String): String =
@@ -394,6 +403,18 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         )
     }
 
+    // Android returns the visible time as the result code, or cancelled if the person said no.
+    val discoverableRequest = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_CANCELED) {
+            services?.noApp?.endReply()
+            notifyUser("Reply cancelled. Nearby phones can't see this phone.")
+        } else {
+            notifyUser("Reply showing for $REPLY_SECONDS seconds.")
+        }
+    }
+
     BackHandler(enabled = conversationId != null) { conversationId = null }
 
     Scaffold(
@@ -534,6 +555,11 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     permissionFeedback = permissionFeedback,
                     radioProblems = radioProblems.map(::radioProblemLabel),
                     batteryRestricted = batteryRestricted,
+                    noAppAvailable = services?.noApp != null,
+                    noAppListening = noAppListening,
+                    noAppAlerts = noAppAlerts,
+                    onNoAppListening = { on -> services?.noApp?.setListening(on) },
+                    onNoAppReply = { replyError = null; replyOpen = true },
                     discoveryMode = discoveryMode,
                     canRename = services != null && services.security == null && !discoveryRequested && !startingConnection,
                     onRename = { name ->
@@ -776,6 +802,25 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                 dashboardOpen = false
             },
             onDismiss = { dashboardOpen = false },
+        )
+    }
+
+    services?.noApp?.takeIf { replyOpen }?.let { noApp ->
+        NoAppReplyDialog(
+            error = replyError,
+            onSend = { reply ->
+                if (noApp.beginReply(reply)) {
+                    record("Bluetooth name reply started.")
+                    replyOpen = false
+                    discoverableRequest.launch(
+                        Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                            .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, REPLY_SECONDS)
+                    )
+                } else {
+                    replyError = "Android refused the name change. Check that Bluetooth is on and allowed."
+                }
+            },
+            onDismiss = { replyOpen = false },
         )
     }
 

@@ -65,6 +65,7 @@ internal object MeshRuntime {
                 scope = scope,
             ),
             dashboard = repository?.let { DashboardConnection.start(context, it, scope) },
+            noApp = repository?.let { NoAppSosControl(context, scope) },
             security = security,
             repository = repository,
             engineLifecycle = engineLifecycle,
