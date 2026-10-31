@@ -101,6 +101,14 @@ Approved peers reconnect without another prompt. This approval only controls the
 
 See `docs/KEEP_ALIVE_TEST.md` for the phone test.
 
+## Dashboard upload
+
+- `DashboardUploader` copies SOS alerts to the dashboard. It's off until someone sets it up, and the mesh never waits for it.
+- Direct messages are never uploaded, because they are end-to-end encrypted.
+- Each alert is a separate request, so one the dashboard refuses can't hold back the rest. Repeats are safe because the dashboard ignores known IDs.
+
+See `docs/DASHBOARD_UPLOAD_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

@@ -1,5 +1,6 @@
 package com.slackers.emergencymesh.ui
 
+import com.slackers.emergencymesh.background.DashboardConnection
 import com.slackers.emergencymesh.background.MeshSession
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MeshTransport
@@ -16,6 +17,7 @@ data class AppServices(
     val transport: MeshTransport,
     val device: LocalDevice,
     val session: MeshSession,
+    val dashboard: DashboardConnection? = null,
     val repository: MessageRepository? = null,
     val security: MessageSecurity? = null,
     val engineLifecycle: EngineLifecycle? = null,
