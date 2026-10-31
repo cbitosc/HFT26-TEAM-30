@@ -182,7 +182,7 @@ Real-phone evidence is in [docs/evidence](docs/evidence).
 | ![Samsung acting as relay](docs/evidence/three-phone-B-samsung.png) | Phone B acting as the middle relay |
 | ![OnePlus in the forced topology](docs/evidence/three-phone-C-oneplus.png) | Phone C with the direct A-C link blocked |
 
-Additional final-app screenshots from M5 will be added here before the documentation freeze.
+These screenshots show the debug topology. Measured delivery and mentor-change results are recorded in the linked evidence reports.
 
 ## Attribution
 
