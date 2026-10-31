@@ -54,6 +54,7 @@ internal object MeshRuntime {
                 startKeepAlive = { MeshForegroundService.start(context) },
                 scope = scope,
             ),
+            noApp = repository?.let { NoAppSosControl(context, scope) },
             security = security,
             repository = repository,
             engineLifecycle = engineLifecycle,

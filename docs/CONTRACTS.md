@@ -101,6 +101,15 @@ Approved peers reconnect without another prompt. This approval only controls the
 
 See `docs/KEEP_ALIVE_TEST.md` for the phone test.
 
+## No-app SOS
+
+- A listening phone scans for Bluetooth names starting with `SOS`, and sends each new one through `sendSos`, so relays treat it like any other SOS.
+- Anyone can set a Bluetooth name, so the alert text always starts with `No-app SOS, not verified`.
+- Each listening phone sends at most 10 of these an hour, because they travel at SOS priority.
+- Never call `cancelDiscovery` while listening, because that also ends the scan Nearby is running.
+
+See `docs/NO_APP_SOS_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.
