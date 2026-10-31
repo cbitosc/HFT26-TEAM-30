@@ -66,7 +66,7 @@ The optional dashboard has [setup instructions](https://github.com/shrenik111/HF
 
 ### Demo video
 
-**[ADD FINAL PUBLIC VIDEO LINK AFTER RECORDING THE FINAL APK]**
+[Watch the demo video](https://youtu.be/avdFCWOaF08)
 
 ## Limits
 

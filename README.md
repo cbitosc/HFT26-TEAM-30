@@ -201,7 +201,7 @@ The [mentor-changes phone test](docs/evidence/mentor-fixes.md) records the role,
 
 ## Demo Video
 
-**Demo video:** [ADD FINAL VIDEO LINK HERE]
+**Demo video:** [Watch on YouTube](https://youtu.be/avdFCWOaF08)
 
 ## Screenshots
 
