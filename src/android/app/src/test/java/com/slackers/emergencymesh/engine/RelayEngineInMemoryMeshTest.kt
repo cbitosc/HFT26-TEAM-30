@@ -23,6 +23,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -292,6 +296,187 @@ class RelayEngineInMemoryMeshTest {
             if (!gatedTransportA.releaseFirstSend.isCompleted) gatedTransportA.releaseFirstSend.complete(Unit)
             repoA.stop()
             repoB.stop()
+        }
+    }
+
+    /** Three phones in a line, so every call from A to C has to cross relay B. */
+    private inner class CallOutLine(
+        scope: TestScope,
+        cAcceptsCalls: Boolean = true,
+        cClock: () -> Long = System::currentTimeMillis,
+        cTrustsA: Boolean = true,
+    ) {
+        val mesh = InMemoryMesh()
+        private val transportA = mesh.phone("A")
+        private val transportB = mesh.phone("B")
+        private val transportC = mesh.phone("C")
+        val daoA = InMemoryEmergencyMeshDao()
+        val daoB = InMemoryEmergencyMeshDao()
+        val repoA = MessageRepositoryImpl(daoA, transportA, TestMessageSecurity(contact("A")), scope)
+        val repoB = MessageRepositoryImpl(
+            daoB, transportB, TestMessageSecurity(contact("B")), scope, acceptsCallOut = { true },
+        )
+        val repoC = MessageRepositoryImpl(
+            InMemoryEmergencyMeshDao(), transportC, TestMessageSecurity(contact("C")), scope,
+            nowMillis = cClock, acceptsCallOut = { cAcceptsCalls },
+        )
+        val ringsAtB = mutableListOf<String>()
+        val ringsAtC = mutableListOf<String>()
+        val confirmedAtA = mutableListOf<String>()
+        private val trustedA = contact("A").copy(verified = cTrustsA)
+
+        suspend fun start(scope: TestScope) {
+            mesh.link("A", "B")
+            mesh.link("B", "C")
+            val listening = UnconfinedTestDispatcher(scope.testScheduler)
+            scope.backgroundScope.launch(listening) { repoB.incomingCallOuts.toList(ringsAtB) }
+            scope.backgroundScope.launch(listening) { repoC.incomingCallOuts.toList(ringsAtC) }
+            scope.backgroundScope.launch(listening) { repoA.answeredCallOuts.toList(confirmedAtA) }
+            listOf(repoA, repoB, repoC).forEach { it.startAndAwaitReady() }
+            repoA.saveContact(contact("B"))
+            repoA.saveContact(contact("C"))
+            repoB.saveContact(contact("A"))
+            repoB.saveContact(contact("C"))
+            repoC.saveContact(trustedA)
+            repoC.saveContact(contact("B"))
+        }
+
+        fun stop() = listOf(repoA, repoB, repoC).forEach { it.stop() }
+
+        fun callPacket() = mesh.sentLog.first { it.packet.type == PacketType.CALL_OUT }.packet
+    }
+
+    @Test
+    fun aCallReachesThePhoneThroughARelayAndIsConfirmed() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+
+            assertEquals(listOf("A"), line.ringsAtC)
+            assertEquals(listOf("C"), line.confirmedAtA)
+            assertEquals(1, line.mesh.sentLog.last { it.packet.type == PacketType.CALL_OUT }.packet.hopCount)
+            assertNull("The caller stops retrying once it rings", line.daoA.queuedPacket(line.callPacket().id))
+            assertNull("The relay stops retrying once it rings", line.daoB.queuedPacket(line.callPacket().id))
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun onlyTheCalledPhoneRings() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertTrue("B is in SOS mode too, but nobody called it", line.ringsAtB.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aPhoneWithoutAnActiveSosStaysSilentAndDoesNotConfirm() = runTest {
+        val line = CallOutLine(this, cAcceptsCalls = false)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertTrue(line.ringsAtC.isEmpty())
+            assertTrue(line.confirmedAtA.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aLateCallNeverRings() = runTest {
+        val line = CallOutLine(this, cClock = { System.currentTimeMillis() + 6 * 60 * 1_000 })
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertTrue(line.ringsAtC.isEmpty())
+            assertTrue(line.confirmedAtA.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun anUnverifiedCallerCanNotRingAPhone() = runTest {
+        val line = CallOutLine(this, cTrustsA = false)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertTrue(line.ringsAtC.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aRepeatedPacketRingsOnce() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            val relayed = line.mesh.sentLog.last { it.packet.type == PacketType.CALL_OUT }
+            val transportB = line.mesh.phone("B")
+            val endpoint = transportB.peers.value.first { it.deviceId == "C" }.endpointId
+            transportB.send(endpoint, relayed.packet)
+            runCurrent()
+            assertEquals(listOf("A"), line.ringsAtC)
+            assertEquals(listOf("C"), line.confirmedAtA)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aCallExpiresInMinutesAndStaysTopPriority() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertEquals(120, line.callPacket().retentionSeconds)
+            assertEquals(Priority.P0_SOS, line.callPacket().priority)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aCallLeavesNoMessageBehind() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendCallOut("C")
+            runCurrent()
+            assertNull(line.daoA.message(line.callPacket().id))
+            assertTrue(line.repoA.sosAlerts.first().isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun onlyAVerifiedContactCanBeCalled() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            val unknown = runCatching { line.repoA.sendCallOut("Z") }.exceptionOrNull()
+            assertTrue(unknown is IllegalArgumentException)
+            line.repoA.saveContact(contact("Z").copy(verified = false))
+            val unverified = runCatching { line.repoA.sendCallOut("Z") }.exceptionOrNull()
+            assertTrue(unverified is IllegalArgumentException)
+        } finally {
+            line.stop()
         }
     }
 

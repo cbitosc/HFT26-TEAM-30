@@ -244,6 +244,11 @@ internal fun SosScreen(
     onConfigureGroup: () -> Unit,
     onRequestLocation: () -> Unit,
     onSend: (String, Boolean) -> Unit,
+    canCallOut: Boolean,
+    callingOut: Boolean,
+    callOutStatus: String?,
+    onCallOut: (String) -> Unit,
+    onCallOutAll: () -> Unit,
 ) {
     var draft by rememberSaveable { mutableStateOf("I need help. Please respond if you are nearby.") }
     var includeLocation by rememberSaveable { mutableStateOf(false) }
@@ -296,6 +301,14 @@ internal fun SosScreen(
         }
         item { Text("SOS ACTIVITY", style = MaterialTheme.typography.labelLarge) }
         if (alerts.isEmpty()) item { Text("No stored SOS alerts.") }
+        if (alerts.any { !it.outgoing }) item {
+            OutlinedButton(onClick = onCallOutAll, enabled = canCallOut && !callingOut, modifier = Modifier.fillMaxWidth()) {
+                Text("Ring SOS phones one at a time")
+            }
+            Text("Rescue Call-Out. A phone rings and flashes for 10 seconds, even on silent, but only while its SOS is active.",
+                style = MaterialTheme.typography.bodySmall)
+            callOutStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
         items(alerts.sortedByDescending { it.createdAtMillis }, key = { it.messageId }) { message ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -311,6 +324,10 @@ internal fun SosScreen(
                         body.accuracyMeters?.let { Text("Accuracy: ±${it.toInt()} m", style = MaterialTheme.typography.bodySmall) }
                         body.locationTimeMillis?.let { Text("Location recorded: ${displayTime(it)}", style = MaterialTheme.typography.bodySmall) }
                     } else Text("Location unavailable or omitted", style = MaterialTheme.typography.bodySmall)
+                    if (!message.outgoing) TextButton(
+                        onClick = { onCallOut(message.senderId) },
+                        enabled = canCallOut && !callingOut,
+                    ) { Text("Ring this phone") }
                 }
             }
         }

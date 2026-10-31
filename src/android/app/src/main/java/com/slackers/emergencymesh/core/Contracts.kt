@@ -128,8 +128,17 @@ interface MessageRepository {
     /** The newest received messages, newest first, so a locked phone can alert its owner. */
     val recentIncoming: Flow<List<ChatMessage>>
 
+    /** A verified contact called this phone during its active SOS. Holds the caller's device ID. */
+    val incomingCallOuts: SharedFlow<String>
+
+    /** A called phone confirmed that it is ringing. Holds that phone's device ID. */
+    val answeredCallOuts: SharedFlow<String>
+
     fun conversation(deviceId: String): Flow<List<ChatMessage>>
     suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String
     suspend fun sendSos(body: MessageBody): String
     suspend fun saveContact(card: ContactCard)
+
+    /** Asks a phone to ring. It stays silent unless its own SOS is still active. */
+    suspend fun sendCallOut(targetDeviceId: String)
 }

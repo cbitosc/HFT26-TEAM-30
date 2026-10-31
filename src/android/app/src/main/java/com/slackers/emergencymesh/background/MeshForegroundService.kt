@@ -43,6 +43,7 @@ class MeshForegroundService : Service() {
     private var following: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var latestStartId = 0
+    private val ringer by lazy { Ringer(scope, DeviceRingOutput(this)) }
 
     override fun onCreate() {
         super.onCreate()
@@ -61,6 +62,11 @@ class MeshForegroundService : Service() {
             session.stop()
             stopSelfResult(startId)
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_STOP_RINGING) {
+            ringer.stop()
+            if (!session.running.value) stopSelfResult(startId)
+            return START_STICKY
         }
         if (!enterForeground()) {
             session.keepAliveChanged(false)
@@ -133,6 +139,7 @@ class MeshForegroundService : Service() {
         val notifications = getSystemService(NotificationManager::class.java)
         following = scope.launch {
             launch { alertNewMessages(services) }
+            launch { ringWhenCalled(services) }
             combine(session.running, services.transport.peers, session.problem) { running, peers, problem ->
                 if (running) meshStatusText(
                     connected = peers.count { it.state == PeerState.CONNECTED },
@@ -159,6 +166,22 @@ class MeshForegroundService : Service() {
                     alerts.show(message, contacts.firstOrNull { it.deviceId == message.senderId }?.displayName)
                 }
             }
+        }
+    }
+
+    private suspend fun ringWhenCalled(services: AppServices) {
+        val repository = services.repository ?: return
+        val alerts = MeshAlerts(this)
+        val stop = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, MeshForegroundService::class.java).setAction(ACTION_STOP_RINGING),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        repository.incomingCallOuts.collect { callerId ->
+            ringer.ring()
+            val contacts = repository.contacts.catch { emit(emptyList()) }.first()
+            alerts.showCallOut(contacts.firstOrNull { it.deviceId == callerId }?.displayName, stop)
         }
     }
 
@@ -194,6 +217,7 @@ class MeshForegroundService : Service() {
 
     companion object {
         private const val ACTION_STOP = "com.slackers.emergencymesh.action.STOP_MESH"
+        private const val ACTION_STOP_RINGING = "com.slackers.emergencymesh.action.STOP_RINGING"
         private const val CHANNEL_ID = "mesh_status"
         private const val NOTIFICATION_ID = 1
         private const val WAKE_LOCK_TAG = "EmergencyMesh:relay"
