@@ -24,6 +24,7 @@ The optional dashboard has [setup instructions](../src/dashboard/README.md). Nev
 - [Final offline three-phone build](evidence/final-build.md): vivo V2404, Samsung SM-S721B and OnePlus CPH2569; one-hop delivery in 2.6 seconds; four-stage timeline; no app crash lines in that run.
 - [Required features](evidence/required-features.md): SOS ahead of 20 regular messages, Pending survives restart, one arrival per message ID.
 - [Extras phone test](evidence/extras-phone-test.md): locked Samsung relay passed and vivo passed after a background setting change; OnePlus froze while locked. Laptop and dashboard used a USB bridge; AI was off.
+- [Security review](evidence/security-review.md): each security claim tied to the build that tested it, including a relay phone holding no readable text on the final build.
 - [Mentor changes phone test](evidence/mentor-fixes.md): offline roles; area alert crossed an outside relay and reached the inside phone in 3.0 seconds; locked Samsung inside was notified in 2.1 seconds; direct messages preferred a direct triangle link and used the relay after it disappeared.
 - [Test matrix](TEST_MATRIX.md), [six-slide presentation](TEAM30_SUBMISSION.pptx) and its [editable outline](SLIDES.md).
 
