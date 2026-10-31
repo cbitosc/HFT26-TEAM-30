@@ -1,6 +1,6 @@
 # Last Breath phone test
 
-When a phone with an active SOS drops to 5% battery, it sends one final SOS. Nearby phones keep carrying it after that phone shuts down. **It hasn't run on a phone yet.** The decision logic passed unit tests, but the battery signal has never been tried.
+When a phone with an active SOS drops to 5% battery, it sends one final SOS. Nearby phones keep carrying it after that phone shuts down. **It passed on a Samsung with a faked battery level:** see [extras-phone-test.md](evidence/extras-phone-test.md). A later phone receiving it after the sender switches off hasn't been tried.
 
 This branch is built on `member1/keep-alive`, so merge that first.
 

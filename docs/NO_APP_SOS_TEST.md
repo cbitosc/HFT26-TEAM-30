@@ -1,6 +1,6 @@
 # No-app SOS phone test
 
-Someone who never installed EmergencyMesh renames their Bluetooth to start with `SOS`. A phone running the mesh hears that name without pairing and adds an unverified SOS. **None of this has run on a phone yet.** Only the name rules and limits passed unit tests, and this feature depends on how each phone handles Bluetooth, so expect some of it to fail.
+Someone who never installed EmergencyMesh renames their Bluetooth to start with `SOS`. A phone running the mesh hears that name without pairing and adds an unverified SOS. **It passed between 2 phones, with one standing in for a phone without the app:** see [extras-phone-test.md](evidence/extras-phone-test.md). A phone that has never had the app hasn't been tried.
 
 This branch is built on `member1/keep-alive`, so merge that first.
 

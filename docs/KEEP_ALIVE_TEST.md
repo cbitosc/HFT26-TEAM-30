@@ -1,6 +1,6 @@
 # Keep-alive phone test
 
-Use this to prove that the mesh keeps working with the screen off. **None of this has run on a phone yet.** Until it passes, the handover build stays the demo build, and the docs keep saying the app must stay open.
+Use this to prove that the mesh keeps working with the screen off. **It has now run on phones, and the result depends on the brand:** see [extras-phone-test.md](evidence/extras-phone-test.md). The Samsung works while locked, the vivo needs the settings below, and the OnePlus still freezes the app.
 
 Don't merge `member1/keep-alive` until tests 1–6 pass.
 
@@ -43,7 +43,7 @@ Tap **Allow background relay** on the Nearby tab first. Then check these manufac
 | Phone | Setting |
 | --- | --- |
 | vivo | Battery, then allow high background power use for EmergencyMesh |
-| OnePlus | Battery usage for the app, then allow background activity |
+| OnePlus | Battery usage for the app, then allow background activity. This didn't stop the freeze in airplane mode |
 | Samsung | Battery, then Background usage limits, then add EmergencyMesh to never sleeping apps |
 
 The exact menu names vary by Android version.

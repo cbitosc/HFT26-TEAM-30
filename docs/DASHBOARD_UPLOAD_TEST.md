@@ -1,6 +1,6 @@
 # Dashboard upload phone test
 
-Use this to prove that an SOS can travel from the offline mesh to the online dashboard. **It hasn't run on a phone yet.** The upload code has only been tested on a laptop, against the real dashboard service.
+Use this to prove that an SOS can travel from the offline mesh to the online dashboard. **It passed on real phones, connected to the laptop over USB:** see [extras-phone-test.md](evidence/extras-phone-test.md). Real Wi-Fi hasn't been tried.
 
 This branch is built on `member1/keep-alive`, so merge that first. The dashboard itself is on `member1/ai-dashboard`.
 

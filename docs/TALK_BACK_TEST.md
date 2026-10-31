@@ -1,6 +1,6 @@
 # Talk-Back phone test
 
-A rescuer types a question. The hidden phone reads it aloud, listens once, and sends back what it heard as text, so the person never has to touch the phone. **None of this has run on a phone yet.** The messaging and consent rules passed unit tests, but speech and the microphone have never been tried, so expect some of it to fail.
+A rescuer types a question. The hidden phone reads it aloud, listens once, and sends back what it heard as text, so the person never has to touch the phone. **It passed in English on a locked Samsung, with a rough transcript:** see [extras-phone-test.md](evidence/extras-phone-test.md). Hindi and Telugu haven't been tried.
 
 This branch is built on `member1/call-out`, which is built on `member1/keep-alive`. Merge those first.
 

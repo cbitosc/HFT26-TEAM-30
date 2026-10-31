@@ -1,8 +1,10 @@
 # Extras test plan
 
-**None of the extras have run on a phone yet.** The team's demo build is `feature/prototype` at `125bd0e`, and it stays the demo build until these pass.
+**Every extra has now run on real phones:** see [extras-phone-test.md](evidence/extras-phone-test.md). They all worked, but keep-alive depends on the phone brand, and some tests weren't run. `feature/prototype` at `125bd0e` stays the fallback until M2 merges.
 
-Install `builds/emergencymesh-extras.apk` on all 3 phones. It holds every extra, and it installs over the existing app without losing data. It's built from `member1/extras`.
+`builds/emergencymesh-extras.apk` holds every extra, and it installs over the existing app without losing data. It's built from `member1/extras`.
+
+**For the demo:** use the Samsung as the locked phone, and keep the OnePlus screen on. The vivo needs **Allow background relay** and its high background power setting, which are set on the team's phone.
 
 ## Order
 
@@ -53,6 +55,8 @@ After merging, run the relay test again on the final build before recording the 
 Only claim what passed, and say what was simulated. The evidence so far is:
 
 - **Tests:** 230 Android unit tests and 70 dashboard tests pass.
-- **Laptop only:** the upload and laptop node passed against the real laptop service, with real encryption, using simulated phones.
+- **Phones:** the results and what wasn't tested are in the evidence file above.
+- **USB, not Wi-Fi:** the upload and laptop node reached the laptop over USB, so don't claim real Wi-Fi yet.
+- **Keep-alive:** say it depends on the phone. Don't say it works on every Android phone.
 - **Fake AI:** the dashboard has only run against a fake model, so don't quote any accuracy figure until `evaluate.py` has run with a real key.
 - **Battery:** keep-alive keeps the CPU awake while the mesh is on, so measure it again on this build.

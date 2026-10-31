@@ -1,6 +1,6 @@
 # Laptop mesh node phone test
 
-A laptop can't run Nearby Connections, so phones reach it over Wi-Fi. It stores each packet and passes it on, which lets phones exchange messages when they're out of radio range of each other. **It hasn't run on a phone yet.** It passed on this laptop against the real service, with real encryption and simulated phones, so only real Wi-Fi between devices is untested.
+A laptop can't run Nearby Connections, so phones reach it over Wi-Fi. It stores each packet and passes it on, which lets phones exchange messages when they're out of radio range of each other. **It passed on real phones with radios blocked, connected to the laptop over USB:** see [extras-phone-test.md](evidence/extras-phone-test.md). Real Wi-Fi between devices hasn't been tried.
 
 This branch is built on `member1/dashboard-upload`, which is built on `member1/keep-alive`. Merge those first. The laptop service is also on this branch.
 

@@ -1,6 +1,6 @@
 # Rescue Call-Out phone test
 
-A rescuer taps one button, and a phone in SOS mode rings and flashes its torch so people can find it, with no cell network. **None of this has run on a phone yet.** The relay logic and timing passed unit tests, but the sound, torch and vibration have never been tried.
+A rescuer taps one button, and a phone in SOS mode rings and flashes its torch so people can find it, with no cell network. **It passed on a locked Samsung:** see [extras-phone-test.md](evidence/extras-phone-test.md). Silent mode, **Stop ringing** and ringing several phones in turn haven't been tried.
 
 This branch is built on `member1/keep-alive`, so merge that first.
 
