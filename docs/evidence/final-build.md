@@ -10,7 +10,7 @@
 | Phones | vivo V2404, Samsung SM-S721B, OnePlus CPH2569 |
 | Setup | Airplane mode on, Bluetooth on, Wi-Fi off, A-C link blocked |
 
-The Samsung's first install failed, so it ran the previous engine build for the relay and SOS sections. Its retry succeeded at 05:53, so all 3 phones now have this build, but the Samsung hasn't relayed on it since.
+The Samsung's first install failed, so it ran the previous engine build for the first relay and SOS checks. Its retry succeeded at 05:53. At 05:59, with all 3 phones on this build, `handover1` went from A to C through B, showing 1 hop, and was Delivered at 2.6 seconds. B's database held none of its text.
 
 ## Results
 
