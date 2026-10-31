@@ -249,6 +249,9 @@ internal fun SosScreen(
     callOutStatus: String?,
     onCallOut: (String) -> Unit,
     onCallOutAll: () -> Unit,
+    talkBackAllowed: Boolean,
+    onTalkBackAllowed: (Boolean) -> Unit,
+    onAskQuestion: (String) -> Unit,
 ) {
     var draft by rememberSaveable { mutableStateOf("I need help. Please respond if you are nearby.") }
     var includeLocation by rememberSaveable { mutableStateOf(false) }
@@ -289,6 +292,14 @@ internal fun SosScreen(
             TextButton(onClick = onRequestLocation, enabled = !sending) { Text("Allow location access") }
         }
         item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = talkBackAllowed, onCheckedChange = onTalkBackAllowed, enabled = !sending)
+                Text("Let rescuers talk to this phone during my SOS", Modifier.weight(1f))
+            }
+            Text("It reads their questions aloud, then listens once and sends back what you say as text. It never listens at any other time, and the words travel encrypted.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        item {
             Button(
                 onClick = { confirming = true },
                 enabled = canSend && !sending && validation == null,
@@ -324,10 +335,16 @@ internal fun SosScreen(
                         body.accuracyMeters?.let { Text("Accuracy: ±${it.toInt()} m", style = MaterialTheme.typography.bodySmall) }
                         body.locationTimeMillis?.let { Text("Location recorded: ${displayTime(it)}", style = MaterialTheme.typography.bodySmall) }
                     } else Text("Location unavailable or omitted", style = MaterialTheme.typography.bodySmall)
-                    if (!message.outgoing) TextButton(
-                        onClick = { onCallOut(message.senderId) },
-                        enabled = canCallOut && !callingOut,
-                    ) { Text("Ring this phone") }
+                    if (!message.outgoing) Row {
+                        TextButton(
+                            onClick = { onCallOut(message.senderId) },
+                            enabled = canCallOut && !callingOut,
+                        ) { Text("Ring this phone") }
+                        TextButton(
+                            onClick = { onAskQuestion(message.senderId) },
+                            enabled = canCallOut,
+                        ) { Text("Ask a question") }
+                    }
                 }
             }
         }
