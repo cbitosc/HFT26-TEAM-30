@@ -19,4 +19,11 @@ internal class SosScanSessionStore(context: Context) {
     fun end() {
         preferences.edit().remove("active_until_millis").apply()
     }
+
+    /** Kept apart from the session itself, so a restart can't send a second final SOS. */
+    fun lastBreathSentFor(): Long = preferences.getLong("last_breath_for", 0L)
+
+    fun markLastBreathSent(session: Long) {
+        preferences.edit().putLong("last_breath_for", session).apply()
+    }
 }
