@@ -153,6 +153,29 @@ See `docs/TALK_BACK_TEST.md` for the phone test.
 
 See `docs/LAPTOP_NODE_TEST.md` for the phone test.
 
+## Roles
+
+- `AppRole` is `USER`, `RESPONDER` or `ADMIN`. `RoleSession` starts empty, so the login screen shows each time the app starts.
+- A role code derives an Ed25519 key on the phone with PBKDF2. `RoleAuthority` pins only the public keys.
+- Never commit a role code.
+
+## Area alerts
+
+- `sendAreaAlert` sends an `AREA_ALERT` packet with no recipient, at SOS priority, with 6-hour retention. It needs a Responder or Admin login.
+- The body is readable by everyone, because a warning must reach people who hold no keys. A role signature proves who sent it.
+- `MessageBody` carries the area: `latitude` and `longitude` are its center, and `accuracyMeters` is its radius.
+- A phone checks the signature first. A bad signature is dropped and never forwarded.
+- Every phone relays a valid alert, but stores and shows it only if `insideArea` is true. A phone with no known location counts as inside.
+- Area alerts have no ACKs. A send to a peer is finished once its transfer completes.
+
+## Routes
+
+- `RouteTable` keeps the fewest-hop next hop for each device, learned from verified packets. It stays in memory.
+- A route lasts 5 minutes, and it's dropped when its next hop disconnects.
+- When a direct packet has a fresh route through a connected phone, other peers wait once for 8 seconds. They get the packet after that unless it's been delivered.
+- A packet to a phone with no route still goes to every peer.
+- SOS and area alerts have no recipient, so they never use routes.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

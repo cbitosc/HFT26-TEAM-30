@@ -1,8 +1,6 @@
 # Security evidence
 
-Later update: the app now uses this provider. See [encrypted-messaging.md](encrypted-messaging.md) for the two-phone test.
-
-**Result: the Tink provider passed its unit and device tests. It isn't integrated yet.** The message engine doesn't call it so far, so no secure message has crossed real phones.
+**Result: the Tink provider passed its unit and device tests.** This page records that first test, run before the provider was connected to the app. The app has used it since. See the [security review](security-review.md) for current evidence, and the [two-phone test](encrypted-messaging.md).
 
 | Detail | Value |
 | --- | --- |
@@ -55,7 +53,9 @@ Opening the keys took about 100 ms on the Samsung.
 - **Replay:** a signature doesn't stop replay by itself. The engine must reject expired and already-seen packets.
 - **Hop values:** TTL and hop count aren't signed, because relays change them.
 
-## Not covered
+## Not covered by this test
+
+Later tests cover the first two items. See the [security review](security-review.md).
 
 - Encrypted messages between real phones
 - Integration with the engine and app

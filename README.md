@@ -2,7 +2,7 @@
 
 Offline emergency text messaging for Android. Nearby phones connect directly and carry messages for each other when cellular networks and internet are unavailable.
 
-> **Project status:** working prototype in progress. Real-phone results are in the [test matrix](docs/TEST_MATRIX.md). Features aren't claimed until they pass there.
+> **Project status:** working prototype, tested on three real Android phones. Real-phone results are in the [test matrix](docs/TEST_MATRIX.md). Features aren't claimed until they pass there.
 
 ---
 
@@ -96,7 +96,11 @@ See [the contracts](docs/CONTRACTS.md) for packet rules and status meanings.
 
 ## Setup
 
-**Requirements:** Android Studio, and physical Android 8.0+ phones with Google Play services. Emulators can't test phone-to-phone radio.
+**Requirements:** physical Android 8.0+ phones with Google Play services. Emulators can't test phone-to-phone radio.
+
+**Fastest way:** download the [final APK](https://github.com/shrenik111/HFT26-TEAM-30/releases/tag/v0.1.0) and install it on each phone.
+
+**To build it yourself,** you also need Android Studio:
 
 1. Clone the repository.
 
@@ -116,6 +120,32 @@ cd HFT26-TEAM-30/src/android
 ```
 
 4. Allow the requested nearby permissions.
+
+The optional dashboard and laptop node have their own [setup guide](src/dashboard/README.md).
+
+## Using the App
+
+Do these once on each phone:
+
+1. Tap **Continue as User**, then allow the permissions.
+2. Open **Nearby**, name the phone, and tap **Start discovery**.
+3. When two phones connect, check that both show the same token. Tick the box and tap **Accept**.
+4. Phones swap contact cards automatically. If one doesn't appear in **Chats**, use **Enroll a contact**.
+5. In **Chats**, tap **Inspect keys**, compare the fingerprint with the other phone, tick the box and tap **Mark verified**. Direct messages stay off until a contact is verified.
+6. In **SOS**, tap **Set SOS group code** and enter the same long code on every phone.
+
+Then try the features:
+
+| Feature | Steps |
+| --- | --- |
+| Direct message | **Chats**, **Open chat**, type a message, **Queue message** |
+| SOS | **SOS**, tick **Attach a recent location if available**, **Review and send SOS**, **Send SOS** |
+| Relay through a middle phone | Debug builds: **Debug**, **Configure allowed devices**, so that A and C can each reach only B |
+| Test location indoors | Debug builds: **Debug**, **Set test location** |
+| Area alert | Log in as Responder or Admin, then **Control**, **Send to this area** |
+| Where people need help | Log in as Admin, then open **Control** |
+
+Role codes for Responder and Admin aren't in this repository. Ask the team for them.
 
 ## Tests
 
@@ -163,10 +193,11 @@ Phone A <----> Phone B <----> Phone C
 - The laptop node and dashboard passed through a USB-backed test path; real phone-to-laptop Wi-Fi is still untested.
 - The dashboard ran with AI off because no real model key was available, so no AI accuracy is claimed.
 - Offline logins and area alerts were tested using debug test locations indoors. Real GPS area boundaries were not tested.
-- Shortest routes were tested on three real phones and five simulated phones, not 1,000. The first message to a new phone still spreads through all paths.
+- Shortest routes were tested on three real phones and five simulated phones, not 1,000. The first message to a new phone still spreads through all paths. In balanced mode a phone stops looking for new phones once it has 3 links, which should limit connections in a crowd, but that wasn't tested at scale.
+- Role codes in this prototype are short and shared by everyone in a role, and the matching public keys are in this public repository. A short code could be guessed offline, which would let someone forge official alerts. Real use needs long random codes and a way to remove one person.
 - An SOS includes a location only when its phone has a fix from the previous two minutes; otherwise the admin sees that no location was sent.
 
-The [mentor-changes phone test](docs/evidence/mentor-fixes.md) records the role, area, admin location and routing results and their limits.
+The [mentor-changes phone test](docs/evidence/mentor-fixes.md) records the role, area, admin location and routing results and their limits. The [security review](docs/evidence/security-review.md) ties each security claim to the build that tested it.
 
 ## Demo Video
 
@@ -181,8 +212,13 @@ Real-phone evidence is in [docs/evidence](docs/evidence).
 | ![vivo in the forced topology](docs/evidence/three-phone-A-vivo.png) | Phone A in the forced A-B-C topology |
 | ![Samsung acting as relay](docs/evidence/three-phone-B-samsung.png) | Phone B acting as the middle relay |
 | ![OnePlus in the forced topology](docs/evidence/three-phone-C-oneplus.png) | Phone C with the direct A-C link blocked |
+| ![Login screen refusing a wrong code](docs/evidence/mentor-login.png) | Login screen refusing a wrong role code |
+| ![Responder warning an area](docs/evidence/mentor-responder.png) | Responder sending an area alert |
+| ![Phone inside the area showing the alert](docs/evidence/mentor-alert-inside.png) | Phone inside the area showing the alert |
+| ![Phone outside the area showing nothing](docs/evidence/mentor-alert-outside.png) | Phone outside the area, showing nothing after relaying the alert |
+| ![Admin seeing where someone needs help](docs/evidence/mentor-admin.png) | Admin seeing an SOS as a distance and direction |
 
-These screenshots show the debug topology. Measured delivery and mentor-change results are recorded in the linked evidence reports.
+The last four screenshots use debug test locations. Measured delivery and mentor-change results are in the linked evidence reports.
 
 ## Attribution
 
@@ -195,6 +231,7 @@ Open-source and third-party components used:
 | [Kotlin and kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Language and concurrency | Apache 2.0 |
 | [JUnit 4](https://junit.org/junit4/) | Tests | EPL 1.0 |
 | [Google Play services Nearby](https://developers.google.com/nearby/connections/overview) | Phone-to-phone connections | Google Play services terms |
+| [Featherless](https://featherless.ai), default model `sarvamai/sarvam-m` | Optional hosted AI for the dashboard | Featherless terms and the model's license |
 
 ## License
 
