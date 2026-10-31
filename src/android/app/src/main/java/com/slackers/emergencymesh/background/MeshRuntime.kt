@@ -30,7 +30,8 @@ internal object MeshRuntime {
 
     private fun create(context: Context): AppServices {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        val transport = NearbyMeshTransport.create(context)
+        val dashboardLink = DashboardLinkStore(context)
+        val transport = NearbyMeshTransport.create(context, LaptopNode(dashboardLink.link))
         // A persisted debug topology must never silently restrict a release build.
         if (!isDebugBuild(context)) transport.setDebugAllowlist(null)
         val database = EmergencyMeshDatabase.getInstance(context)
@@ -64,7 +65,7 @@ internal object MeshRuntime {
                 startKeepAlive = { MeshForegroundService.start(context) },
                 scope = scope,
             ),
-            dashboard = repository?.let { DashboardConnection.start(context, it, scope) },
+            dashboard = repository?.let { DashboardConnection.start(dashboardLink, it, scope) },
             noApp = repository?.let { NoAppSosControl(context, scope) },
             talkBack = repository?.let { TalkBackControl(context) },
             security = security,

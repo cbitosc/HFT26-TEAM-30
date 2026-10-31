@@ -40,6 +40,8 @@ internal data class TransportConfig(
     val burstMillis: Long = 15_000,
     val idleMillis: Long = 45_000,
     val targetLinks: Int = 3,
+    val relayPollMillis: Long = 5_000,
+    val relayRetryMillis: Long = 15_000,
 )
 
 internal class ConnectionPolicy(private val config: TransportConfig) {

@@ -144,6 +144,15 @@ See `docs/NO_APP_SOS_TEST.md` for the phone test.
 
 See `docs/TALK_BACK_TEST.md` for the phone test.
 
+## Laptop node
+
+- A `RelayNode` appears to the engine as one more connected neighbor, called **Laptop node**. It's reached over Wi-Fi, because a laptop can't run Nearby Connections.
+- It holds no keys, so phones still verify and decrypt every packet themselves.
+- `SendResult.Stored` means the node took custody. A node never sends receipts, so the engine stops retrying that peer.
+- It doesn't count towards the radio link target, and the debug allowlist doesn't apply to it, because it isn't a radio link.
+
+See `docs/LAPTOP_NODE_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

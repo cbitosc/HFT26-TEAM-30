@@ -285,21 +285,28 @@ class MessageRepositoryImpl(
                 // therefore terminal for this immediate peer; failed sends get at most three tries.
                 val terminalAck = packet.type.isAck &&
                     (sendResult == SendResult.TransportComplete || attempt >= MAX_ACK_ATTEMPTS)
-                if (terminalAck) {
+                // A relay node took custody and never sends receipts, so this peer is finished.
+                val finished = terminalAck || sendResult == SendResult.Stored
+                if (finished) {
                     dao.putPeerReceipt(inFlightReceipt.copy(acknowledgedAtMillis = nowMillis()))
-                }
-                if (!terminalAck) {
+                } else {
                     // A transport-complete result for ordinary messages is deliberately not an
                     // application receipt; those remain retryable until the signed ACK arrives.
-                    workers().launch {
-                        delay(retryDelayMillis(attempt))
-                        val reconnectedPeer = transport.peers.value.firstOrNull {
-                            it.deviceId == peer.deviceId && it.state == PeerState.CONNECTED
-                        }
-                        if (reconnectedPeer != null) dispatchTo(reconnectedPeer)
-                    }
+                    dispatchLater(peer, retryDelayMillis(attempt))
                 }
             }
+            // Finished packets set no retry, so a full batch needs its own way back to the rest.
+            if (dispatched >= DISPATCH_BATCH_SIZE) dispatchLater(peer, INITIAL_RETRY_MS)
+        }
+    }
+
+    private fun dispatchLater(peer: PeerInfo, delayMillis: Long) {
+        workers().launch {
+            delay(delayMillis)
+            val reconnectedPeer = transport.peers.value.firstOrNull {
+                it.deviceId == peer.deviceId && it.state == PeerState.CONNECTED
+            }
+            if (reconnectedPeer != null) dispatchTo(reconnectedPeer)
         }
     }
 

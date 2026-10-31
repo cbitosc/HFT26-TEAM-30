@@ -815,8 +815,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         DashboardLinkDialog(
             current = dashboard.link.value,
             error = dashboardError,
-            onSave = { url, token, includeStoredAlerts ->
-                if (dashboard.save(url, token, includeStoredAlerts, System.currentTimeMillis())) {
+            onSave = { url, token, includeStoredAlerts, useAsNode ->
+                if (dashboard.save(url, token, includeStoredAlerts, useAsNode, System.currentTimeMillis())) {
                     record("Dashboard upload turned on. The token is not logged.")
                     dashboardOpen = false
                 } else {

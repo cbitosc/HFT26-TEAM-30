@@ -22,6 +22,14 @@ from assistant import (  # noqa: E402
 from dashboard import build_server, load_env  # noqa: E402
 from evaluate import score  # noqa: E402
 from fake_featherless import FakeFeatherless, default_reply  # noqa: E402
+from mesh_node import (  # noqa: E402
+    FETCH_LIMIT,
+    MAX_RETENTION_SECONDS,
+    InvalidPacket,
+    MeshNode,
+    clean_packet,
+    node_reply,
+)
 from store import AlertStore, InvalidAlert, clean_alert  # noqa: E402
 from triage import assess, rank  # noqa: E402
 
@@ -251,12 +259,15 @@ class ServerTest(unittest.TestCase):
         self.addCleanup(self.fake.stop)
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
-        self.store = AlertStore(str(Path(self.folder.name) / "test.db"))
+        database = str(Path(self.folder.name) / "test.db")
+        self.store = AlertStore(database)
         self.addCleanup(self.store.close)
+        self.node = MeshNode(database)
+        self.addCleanup(self.node.close)
         self.start_server(Assistant(API_KEY, model="test-model", base_url=self.fake.base_url, sleep=lambda _: None))
 
     def start_server(self, assistant, token=None):
-        self.server = build_server("127.0.0.1", 0, self.store, assistant, token)
+        self.server = build_server("127.0.0.1", 0, self.store, assistant, token, self.node)
         self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -416,6 +427,159 @@ class ServerTest(unittest.TestCase):
         self.assertEqual("waiting", state["alerts"][0]["analysis_state"])
         self.assertEqual("critical", state["alerts"][0]["assessment"]["urgency"])
         self.assertEqual(503, self.call("/api/alerts/a/translate", {"language": "hi"})[0])
+
+
+class MeshNodeTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.node = MeshNode(str(Path(folder.name) / "test.db"))
+        self.addCleanup(self.node.close)
+
+    def packet(self, packet_id="p1", device="phone-a", data=b"sealed", expires_at=1000.0):
+        return {"device": device, "id": packet_id, "data": data, "expires_at": expires_at}
+
+    def test_a_packet_passes_to_another_phone_unchanged(self):
+        self.assertTrue(self.node.store(self.packet(), now=1.0))
+        cursor, packets = self.node.fetch("phone-c", 0, now=2.0)
+        self.assertEqual([b"sealed"], packets)
+        self.assertEqual(1, cursor)
+
+    def test_a_phone_never_gets_its_own_packet_back(self):
+        self.node.store(self.packet(), now=1.0)
+        cursor, packets = self.node.fetch("phone-a", 0, now=2.0)
+        self.assertEqual([], packets)
+        self.assertEqual(1, cursor)
+
+    def test_a_cursor_only_returns_newer_packets(self):
+        self.node.store(self.packet("p1"), now=1.0)
+        cursor, _ = self.node.fetch("phone-c", 0, now=2.0)
+        self.node.store(self.packet("p2", data=b"second"), now=3.0)
+        _, packets = self.node.fetch("phone-c", cursor, now=4.0)
+        self.assertEqual([b"second"], packets)
+
+    def test_a_repeat_is_stored_once(self):
+        self.assertTrue(self.node.store(self.packet(), now=1.0))
+        self.assertFalse(self.node.store(self.packet(), now=2.0))
+        self.assertEqual(1, self.node.stats(now=3.0)["packets"])
+
+    def test_expired_packets_are_dropped(self):
+        self.node.store(self.packet(expires_at=5.0), now=1.0)
+        self.assertEqual([], self.node.fetch("phone-c", 0, now=5.0)[1])
+        self.assertEqual(0, self.node.stats(now=6.0)["packets"])
+
+    def test_a_large_backlog_comes_in_pages(self):
+        for number in range(FETCH_LIMIT + 5):
+            self.node.store(self.packet("p%d" % number), now=1.0)
+        cursor, first = self.node.fetch("phone-c", 0, now=2.0)
+        _, second = self.node.fetch("phone-c", cursor, now=2.0)
+        self.assertEqual((FETCH_LIMIT, 5), (len(first), len(second)))
+
+    def test_a_phone_recovers_if_the_node_lost_its_data(self):
+        self.node.store(self.packet("p1"), now=1.0)
+        cursor, packets = self.node.fetch("phone-c", 999, now=2.0)
+        self.assertEqual([b"sealed"], packets)
+        self.assertEqual(1, cursor)
+
+    def test_only_recent_phones_count_as_connected(self):
+        self.node.fetch("phone-c", 0, now=1.0)
+        self.assertEqual(1, self.node.stats(now=2.0)["phones"])
+        self.assertEqual(0, self.node.stats(now=100.0)["phones"])
+
+    def test_a_reply_is_a_cursor_then_one_packet_per_line(self):
+        self.assertEqual(b"7\nAQI=\n", node_reply(7, [b"\x01\x02"]))
+        self.assertEqual(b"0\n", node_reply(0, []))
+
+    def test_invalid_packets_are_refused(self):
+        good = {"device": "phone-a", "id": "p1", "expires_at": 100.0, "data": "AQI="}
+        for change in (
+            {"device": ""}, {"device": "x" * 65}, {"id": 7}, {"expires_at": True}, {"expires_at": 5.0},
+            {"data": "not base64!"}, {"data": ""}, {"data": 7},
+            {"data": "A" * 44_000},
+        ):
+            with self.subTest(change=change), self.assertRaises(InvalidPacket):
+                clean_packet({**good, **change}, now=50.0)
+        with self.assertRaises(InvalidPacket):
+            clean_packet("not an object", now=50.0)
+
+    def test_a_phone_can_not_keep_a_packet_here_forever(self):
+        packet = clean_packet(
+            {"device": "phone-a", "id": "p1", "expires_at": 9e12, "data": "AQI="}, now=50.0,
+        )
+        self.assertEqual(50.0 + MAX_RETENTION_SECONDS, packet["expires_at"])
+
+
+class MeshNodeServerTest(unittest.TestCase):
+    TOKEN = "right-token"
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        database = str(Path(self.folder.name) / "test.db")
+        store = AlertStore(database)
+        self.addCleanup(store.close)
+        node = MeshNode(database)
+        self.addCleanup(node.close)
+        self.server = build_server("127.0.0.1", 0, store, Assistant(None), self.TOKEN, node)
+        self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def send(self, packet, token=TOKEN):
+        request = urllib.request.Request(
+            self.base + "/mesh/packets",
+            data=json.dumps(packet).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Upload-Token": token},
+        )
+        return self.open(request)
+
+    def fetch(self, device="phone-c", after="0", token=TOKEN):
+        request = urllib.request.Request(
+            "%s/mesh/packets?device=%s&after=%s" % (self.base, device, after),
+            headers={"X-Upload-Token": token},
+        )
+        return self.open(request)
+
+    def open(self, request):
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as error:
+            with error:
+                return error.code, error.read()
+
+    def packet(self, packet_id="p1"):
+        return {
+            "device": "phone-a", "id": packet_id, "data": "AQI=",
+            "expires_at": time.time() + 60,
+        }
+
+    def test_a_packet_crosses_the_laptop(self):
+        self.assertEqual(200, self.send(self.packet())[0])
+        status, body = self.fetch()
+        self.assertEqual((200, b"1\nAQI=\n"), (status, body))
+
+    def test_a_repeat_is_still_a_success_for_the_phone(self):
+        self.assertEqual(200, self.send(self.packet())[0])
+        self.assertEqual(200, self.send(self.packet())[0])
+
+    def test_both_directions_need_the_token(self):
+        self.assertEqual(401, self.send(self.packet(), token="wrong")[0])
+        self.assertEqual(401, self.fetch(token="wrong")[0])
+
+    def test_bad_requests_are_refused(self):
+        self.assertEqual(400, self.send({**self.packet(), "data": "not base64!"})[0])
+        self.assertEqual(400, self.fetch(device="")[0])
+        self.assertEqual(400, self.fetch(after="soon")[0])
+        self.assertEqual(400, self.fetch(after="-1")[0])
+
+    def test_the_page_reports_the_node(self):
+        self.send(self.packet())
+        self.fetch()
+        with urllib.request.urlopen(self.base + "/api/state", timeout=5) as response:
+            state = json.loads(response.read())
+        self.assertEqual({"phones": 2, "packets": 1}, state["node"])
 
 
 class EvaluationTest(unittest.TestCase):
