@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmergencyMesh Dashboard</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --line: #d9dde3;
+  --text: #15191f; --muted: #5a6470; --accent: #0b5cad;
+  --critical: #c0202c; --critical-bg: #fde9ea;
+  --high: #b85600; --high-bg: #fdefe0;
+  --medium: #806300; --medium-bg: #fbf3d3;
+  --low: #2c6e49; --low-bg: #e3f2e9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216; --panel: #181c22; --panel-2: #20252c; --line: #2f353e;
+    --text: #eceff3; --muted: #9aa4b0; --accent: #6cb1f5;
+    --critical: #ff7a82; --critical-bg: #40161a;
+    --high: #ffaa5e; --high-bg: #3b2410;
+    --medium: #ecc94b; --medium-bg: #352c0c;
+    --low: #6fd19b; --low-bg: #12301f;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Devanagari", "Noto Sans Telugu", "Nirmala UI", sans-serif;
+}
+header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 24px; position: sticky; top: 0; z-index: 2; }
+.bar { max-width: 1240px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+h1 { font-size: 18px; margin: 0; }
+.tagline { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+#ai { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); }
+#ai.on { color: var(--low); }
+#ai.unavailable { color: var(--critical); }
+main { max-width: 1240px; margin: 0 auto; padding: 20px 24px 60px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
+aside { position: sticky; top: 76px; display: grid; gap: 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.panel h2 { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.count { display: flex; justify-content: space-between; padding: 3px 0; }
+.count b { font-variant-numeric: tabular-nums; }
+button, select {
+  font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 7px; padding: 5px 10px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stack { display: grid; gap: 8px; }
+.note { color: var(--muted); font-size: 13px; margin: 0; }
+#alerts { display: grid; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card.critical { border-left-color: var(--critical); }
+.card.high { border-left-color: var(--high); }
+.card.medium { border-left-color: var(--medium); }
+.card.low { border-left-color: var(--low); }
+.card.reviewed { opacity: .62; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rank { font-weight: 700; font-variant-numeric: tabular-nums; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--panel-2); }
+.badge.critical { color: var(--critical); background: var(--critical-bg); }
+.badge.high { color: var(--high); background: var(--high-bg); }
+.badge.medium { color: var(--medium); background: var(--medium-bg); }
+.badge.low { color: var(--low); background: var(--low-bg); }
+.meta { color: var(--muted); font-size: 13px; }
+.label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.original { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; font-size: 16px; }
+.suggestion { margin-top: 10px; padding: 10px 12px; background: var(--panel-2); border-radius: 8px; }
+.suggestion p { margin: 0; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.translation { white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+.actions label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+.warn { color: var(--critical); font-size: 13px; }
+@media (max-width: 860px) {
+  header { padding: 12px 16px; position: static; }
+  main { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  aside { position: static; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div>
+      <h1>EmergencyMesh Dashboard</h1>
+      <div class="tagline">AI suggests. People decide. The mesh works without this page.</div>
+    </div>
+    <div class="spacer"></div>
+    <div id="ai" role="status">Connecting…</div>
+  </div>
+</header>
+<main>
+  <aside>
+    <section class="panel" aria-label="Alerts waiting for review">
+      <h2>Waiting for review</h2>
+      <div id="counts"></div>
+    </section>
+    <section class="panel" aria-label="Laptop mesh node">
+      <h2>Mesh node</h2>
+      <p class="note" id="node">No phones connected</p>
+    </section>
+    <section class="panel stack" aria-label="Sample data">
+      <h2>Sample data</h2>
+      <p class="note">Practice alerts for the demo. They are marked on every card.</p>
+      <button id="load-samples">Load sample alerts</button>
+      <button id="clear-samples">Remove sample alerts</button>
+    </section>
+  </aside>
+  <section id="alerts" aria-live="polite" aria-label="Alerts in review order"></section>
+</main>
+<script>
+"use strict";
+const AI_TEXT = {
+  on: (ai) => `AI on · ${ai.model}`,
+  off: () => "AI off · Add a Featherless key",
+  unavailable: (ai) => `AI unavailable · ${ai.detail}`,
+};
+const FACT_LABELS = {
+  people: "People", place: "Place", injuries: "Injuries",
+  needs: "Needs", deadline: "Deadline", personal_note: "Personal note",
+};
+const SOURCE_TEXT = { ai: "AI suggestion", person: "Set by a person", sender: "Sender's priority" };
+const PRIORITY_TEXT = { P0: "SOS", P1: "Emergency", P2: "Regular" };
+const languageChoice = new Map();
+const translating = new Set();
+const translationErrors = new Map();
+let languages = {};
+let urgencies = [];
+let lastSnapshot = "";
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function title(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1).replace("_", " ");
+}
+
+function waited(createdAt) {
+  const minutes = Math.max(0, Math.round((Date.now() / 1000 - createdAt) / 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`;
+}
+
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const reply = await response.json();
+  if (!response.ok) throw new Error(reply.error || "Request failed");
+  return reply;
+}
+
+function action(path, body) {
+  post(path, body).then(() => refresh(true)).catch((error) => {
+    document.getElementById("ai").textContent = error.message;
+  });
+}
+
+function alertPath(alert, name) {
+  return `/api/alerts/${encodeURIComponent(alert.id)}/${name}`;
+}
+
+function renderSuggestion(alert) {
+  const box = el("div", "suggestion");
+  const { analysis, analysis_state: state } = alert;
+  if (analysis) {
+    box.append(el("span", "label",
+      `AI suggestion · ${title(analysis.category)} · ${title(analysis.urgency)} · ${Math.round(analysis.confidence * 100)}% confident`));
+    box.append(el("p", "", alert.assessment.source === "ai" ? alert.assessment.reason : analysis.reason));
+    const facts = Object.entries(analysis.key_facts || {}).filter(([, value]) => value);
+    if (facts.length) {
+      const list = el("dl", "facts");
+      for (const [name, value] of facts) {
+        list.append(el("dt", "", FACT_LABELS[name] || name), el("dd", "", value));
+      }
+      box.append(el("span", "label", "Key facts · Check them against the original"), list);
+    }
+    return box;
+  }
+  if (state === "failed") {
+    box.append(el("p", "", "AI unavailable. Use the original message."));
+    const retry = el("button", "", "Try again");
+    retry.addEventListener("click", () => action(alertPath(alert, "retry")));
+    box.append(retry);
+    return box;
+  }
+  box.append(el("p", "note", alert.ai_running ? "AI is reading this message…" : alert.assessment.reason));
+  return box;
+}
+
+function renderTranslation(alert) {
+  const language = languageChoice.get(alert.id);
+  if (!language) return null;
+  const box = el("div", "suggestion");
+  box.append(el("span", "label", `AI translation to ${languages[language]} · The original above is the record`));
+  const text = alert.translations[language];
+  const problem = translationErrors.get(`${alert.id}:${language}`);
+  if (text) box.append(el("p", "translation", text));
+  else if (problem) box.append(el("p", "warn", `AI unavailable. ${problem}`));
+  else box.append(el("p", "note", "Translating…"));
+  return box;
+}
+
+function translate(alert, language) {
+  languageChoice.set(alert.id, language);
+  const job = `${alert.id}:${language}`;
+  if (!language || alert.translations[language] || translating.has(job)) {
+    setTimeout(refresh, 0, true);
+    return;
+  }
+  translating.add(job);
+  translationErrors.delete(job);
+  post(alertPath(alert, "translate"), { language })
+    .catch((error) => translationErrors.set(job, error.message))
+    .finally(() => { translating.delete(job); refresh(true); });
+  setTimeout(refresh, 0, true);
+}
+
+function renderActions(alert) {
+  const row = el("div", "actions");
+  const review = el("button", "", alert.reviewed ? "Move back to the queue" : "Mark reviewed");
+  review.addEventListener("click", () => action(alertPath(alert, "reviewed"), { reviewed: !alert.reviewed }));
+  row.append(review);
+
+  const urgencyLabel = el("label", "", "Set urgency");
+  const urgency = el("select");
+  urgency.append(new Option("Automatic", ""));
+  for (const name of urgencies) urgency.append(new Option(title(name), name));
+  urgency.value = alert.override || "";
+  urgency.addEventListener("change", () =>
+    action(alertPath(alert, "override"), { urgency: urgency.value || null }));
+  urgencyLabel.append(urgency);
+  row.append(urgencyLabel);
+
+  const languageLabel = el("label", "", "Translate to");
+  const language = el("select");
+  language.append(new Option("Not translated", ""));
+  for (const [code, name] of Object.entries(languages)) language.append(new Option(name, code));
+  language.value = languageChoice.get(alert.id) || "";
+  language.addEventListener("change", () => translate(alert, language.value));
+  languageLabel.append(language);
+  row.append(languageLabel);
+  return row;
+}
+
+function renderAlert(alert) {
+  const { urgency, source } = alert.assessment;
+  const card = el("article", `card ${urgency}${alert.reviewed ? " reviewed" : ""}`);
+  card.dataset.id = alert.id;
+
+  const top = el("div", "top");
+  top.append(el("span", "rank", `#${alert.rank}`));
+  top.append(el("span", `badge ${urgency}`, title(urgency)));
+  top.append(el("span", "badge", SOURCE_TEXT[source]));
+  top.append(el("span", "badge", PRIORITY_TEXT[alert.priority]));
+  if (alert.source === "sample") top.append(el("span", "badge", "Sample data"));
+  if (alert.reviewed) top.append(el("span", "badge", "Reviewed"));
+  top.append(el("span", "spacer"));
+  const hops = alert.hops === 1 ? "1 hop" : `${alert.hops} hops`;
+  top.append(el("span", "meta", `${alert.sender} · ${hops} · ${waited(alert.created_at)}`));
+  card.append(top);
+
+  if (alert.latitude !== null && alert.longitude !== null) {
+    card.append(el("div", "meta", `Location ${alert.latitude.toFixed(4)}, ${alert.longitude.toFixed(4)}`));
+  }
+  card.append(el("p", "original", alert.text));
+  card.append(renderSuggestion(alert));
+  const translation = renderTranslation(alert);
+  if (translation) card.append(translation);
+  card.append(renderActions(alert));
+  return card;
+}
+
+function render(state) {
+  languages = state.languages;
+  urgencies = state.urgencies;
+  const ai = document.getElementById("ai");
+  ai.className = state.ai.state;
+  ai.textContent = AI_TEXT[state.ai.state](state.ai);
+
+  const counts = document.getElementById("counts");
+  counts.replaceChildren(...state.urgencies.map((name) => {
+    const row = el("div", "count");
+    row.append(el("span", "", title(name)), el("b", "", String(state.counts[name])));
+    return row;
+  }));
+
+  const { phones, packets } = state.node;
+  document.getElementById("node").textContent = phones
+    ? `Carrying ${packets === 1 ? "1 packet" : `${packets} packets`} for ${phones === 1 ? "1 phone" : `${phones} phones`}. This laptop can't read them.`
+    : packets ? `Holding ${packets === 1 ? "1 packet" : `${packets} packets`} until a phone connects.` : "No phones connected";
+
+  const running = state.ai.state === "on";
+  const alerts = document.getElementById("alerts");
+  if (!state.alerts.length) {
+    alerts.replaceChildren(el("div", "panel empty",
+      "No alerts yet. They appear here when a phone with internet uploads them."));
+    return;
+  }
+  alerts.replaceChildren(...state.alerts.map((alert) =>
+    renderAlert({ ...alert, ai_running: running && alert.analysis_state === "waiting" })));
+}
+
+async function refresh(changed) {
+  // Rebuilding the list would close a dropdown while someone is using it.
+  if (document.activeElement && document.activeElement.tagName === "SELECT") return;
+  try {
+    const response = await fetch("/api/state");
+    const state = await response.json();
+    const snapshot = JSON.stringify(state) + Math.floor(Date.now() / 60000);
+    if (changed !== true && snapshot === lastSnapshot) return;
+    lastSnapshot = snapshot;
+    render(state);
+  } catch (error) {
+    const ai = document.getElementById("ai");
+    ai.className = "unavailable";
+    ai.textContent = "Dashboard service stopped";
+    lastSnapshot = "";
+  }
+}
+
+document.getElementById("load-samples").addEventListener("click", () => action("/api/samples"));
+document.getElementById("clear-samples").addEventListener("click", () => action("/api/samples/clear"));
+document.addEventListener("change", (event) => {
+  if (event.target.tagName === "SELECT") event.target.blur();
+});
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
