@@ -1,6 +1,6 @@
 # EmergencyMesh mentoring guide
 
-Read this before the mentoring evaluation. Tested results are as of 5:55 AM on Saturday 31 October. Update anything that changes, and never claim something that hasn't been tested.
+Read this before the mentoring evaluation. Core results are from the final required-build run; extras results are current through 12:53 PM on Saturday 31 October. Never claim more than the linked evidence proves.
 
 ## The 30-second pitch
 
@@ -108,13 +108,13 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 ### Setup checklist, 15 minutes before
 
 - [ ] All 3 phones have the same APK and commit
-- [ ] Phones are charged, unlocked, and set to a long screen timeout
+- [ ] Phones are charged; use Samsung for a locked relay and keep OnePlus unlocked
 - [ ] Airplane mode on, Bluetooth on, Wi-Fi off
 - [ ] Contacts verified on all 3 phones
 - [ ] Same group code on all 3 phones
 - [ ] Debug topology set: A allows B, C allows B, B allows A and C
 - [ ] Debug screen shows A with 1 connection, B with 2, C with 1
-- [ ] Screen timeout is long enough, because a locked phone stops its radio
+- [ ] Samsung shows the foreground-service notification if background relay is demonstrated
 - [ ] Backup video ready offline
 
 **Don't start from scratch in front of a mentor.** Pairing, enrollment and topology take several minutes, so do them beforehand.
@@ -165,7 +165,7 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 
 **How many phones have you tested?** Three, with one relay hop. The TTL allows more hops, but we haven't tested more.
 
-**Where is the AI?** The AI assistant is optional in the statement. We prioritized the required offline system first.
+**Where is the AI?** The optional volunteer dashboard is built. It can classify, extract key facts, rank alerts and translate while always showing the original message and allowing human override. Its 70 tests used a fake Featherless server. No real key was available, so real-model output and accuracy are not claimed. With AI off, the dashboard still displays and sorts SOS alerts by sender priority.
 
 ### Networking
 
@@ -173,7 +173,7 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 
 **What does `P2P_CLUSTER` mean?** It allows many-to-many connections, which a mesh needs.
 
-**Why flooding, not routing tables?** In a disaster, phones move and no phone knows the whole network. Passing messages to neighbors is simple and resilient. The cost is extra traffic, which TTL and duplicate removal limit.
+**Why flooding, not routing tables?** The proven fallback is controlled flooding because phones move and no device knows the whole network. TTL, duplicate removal and no-echo rules limit traffic. If the final routing branch passes, add that fresh shortest paths are preferred for direct messages, with an eight-second fallback to flooding when the path fails.
 
 **How do you stop infinite loops?** Three ways: TTL decreases at each hop, every phone remembers packet IDs it has seen, and a packet is never sent back to the phone it came from.
 
@@ -238,17 +238,17 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 
 **How much battery does it save?** Use the measured comparison. If it isn't finished, say so.
 
-**Does it work in the background?** Not yet. The app must stay open with the phone unlocked in this prototype, because the radio stops when it leaves the screen. Background operation is our next step.
+**Does it work in the background?** It depends on the phone. The locked Samsung relayed without setup, and vivo relayed after its background-power setting was enabled. The tested OnePlus froze the app even after exemptions, so we keep its screen on and do not claim universal Android background delivery.
 
 ### Process
 
-**How did you test it?** 119 unit tests, 10 device tests, and real offline tests on three phones. Evidence is in `docs/evidence`.
+**How did you test it?** The required build passed 119 unit tests plus 10 security device tests and real offline tests on three phones. The extras baseline reports 230 Android unit tests and 70 dashboard tests, followed by its documented real-phone run. Evidence and limitations are in `docs/evidence`.
 
-**Did you use AI tools?** Answer honestly, and follow the event rules.
+**Did you use AI tools?** Yes. We used AI coding assistants to help plan, implement, review and debug. We remained responsible for integration and verified behavior with automated tests and real-phone evidence. Do not claim AI-generated code was correct without those checks.
 
 **What was the hardest part?** Three good answers: connection collisions on real phones, a queue query that blocked relay until we redesigned it, and reporting honest status.
 
-**What would you do next?** Background operation, range testing, more phones, SOS rate limits, and the optional AI assistant.
+**What would you do next?** Improve background reliability across Android brands, measure range and battery, test more hops and phones, add SOS rate limits, prove real Wi-Fi laptop transport, and evaluate the dashboard with a real model.
 
 ## Who answers what
 
