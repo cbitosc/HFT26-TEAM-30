@@ -2,6 +2,7 @@ package com.slackers.emergencymesh.ui
 
 import android.Manifest
 import android.app.Activity
+import android.location.Location
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.net.Uri
@@ -52,6 +53,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.slackers.emergencymesh.background.REPLY_SECONDS
 import com.slackers.emergencymesh.background.MeshForegroundService
 import com.slackers.emergencymesh.core.ChatMessage
+import com.slackers.emergencymesh.security.AppRole
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.ContactKeyWarning
 import com.slackers.emergencymesh.core.DiscoveryMode
@@ -82,7 +84,7 @@ import java.util.Date
 import java.util.Locale
 
 private enum class AppTab(val title: String) {
-    CHATS("Chats"), NEARBY("Nearby"), SOS("SOS"), DEBUG("Debug")
+    CHATS("Chats"), NEARBY("Nearby"), SOS("SOS"), COMMAND("Control"), DEBUG("Debug")
 }
 
 @Composable
@@ -103,6 +105,14 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var connectionStartJob by remember { mutableStateOf<Job?>(null) }
     var sendingDirect by remember { mutableStateOf(false) }
     var sendingSos by remember { mutableStateOf(false) }
+    var checkingLogin by remember { mutableStateOf(false) }
+    var loginError by remember { mutableStateOf<String?>(null) }
+    var sendingAlert by remember { mutableStateOf(false) }
+    var here by remember { mutableStateOf<Location?>(null) }
+    var dismissedAlert by rememberSaveable { mutableStateOf<String?>(null) }
+    val testLocations = remember(context) { TestLocationStore(context) }
+    var testLocation by remember(context) { mutableStateOf(testLocations.read()) }
+    var testLocationOpen by remember { mutableStateOf(false) }
     var callingOut by remember { mutableStateOf(false) }
     var callOutStatus by remember { mutableStateOf<String?>(null) }
     var questionFor by remember { mutableStateOf<String?>(null) }
@@ -216,7 +226,17 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val noAppAlerts by noAppAlertsFlow.collectAsStateWithLifecycle()
     val talkBackFlow = remember(services) { services?.talkBack?.allowed ?: MutableStateFlow(false) }
     val talkBackAllowed by talkBackFlow.collectAsStateWithLifecycle()
+    val roleFlow = remember(services) { services?.roles?.role ?: MutableStateFlow<AppRole?>(AppRole.USER) }
+    val role by roleFlow.collectAsStateWithLifecycle()
+    val areaAlertsFlow = remember(services) {
+        (services?.repository?.areaAlerts ?: flowOf(emptyList<ChatMessage>())).catch { emit(emptyList()) }
+    }
+    val areaAlerts by areaAlertsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val connected = peers.count { it.state == PeerState.CONNECTED }
+
+    fun refreshHere() {
+        scope.launch { here = withContext(Dispatchers.IO) { areaLocation(context) } }
+    }
 
     fun nameOf(deviceId: String): String =
         contacts.firstOrNull { it.deviceId == deviceId }?.displayName?.takeIf { it.isNotBlank() }
@@ -435,6 +455,34 @@ fun EmergencyMeshApp(services: AppServices? = null) {
 
     BackHandler(enabled = conversationId != null) { conversationId = null }
 
+    LaunchedEffect(tab) {
+        if (tab == AppTab.COMMAND) refreshHere()
+    }
+
+    val roles = services?.roles
+    if (roles != null && role == null) {
+        LoginScreen(
+            checking = checkingLogin,
+            error = loginError,
+            onContinueAsUser = {
+                loginError = null
+                tabName = AppTab.CHATS.name
+                roles.continueAsUser()
+            },
+            onLogin = { wanted, code ->
+                checkingLogin = true
+                loginError = null
+                scope.launch {
+                    val accepted = withContext(Dispatchers.Default) { roles.login(wanted, code) }
+                    checkingLogin = false
+                    if (accepted) tabName = AppTab.COMMAND.name
+                    else loginError = "That code isn't right for ${wanted.title}."
+                }
+            },
+        )
+        return
+    }
+
     Scaffold(
         modifier = Modifier.imePadding(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -449,14 +497,23 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         Text("EmergencyMesh", style = MaterialTheme.typography.titleLarge)
                         Text(securityLabel, style = MaterialTheme.typography.labelSmall)
                     }
-                    Text("$connected connected", style = MaterialTheme.typography.labelMedium)
+                    Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                        Text("$connected connected", style = MaterialTheme.typography.labelMedium)
+                        if (roles != null) TextButton(onClick = {
+                            conversationId = null
+                            tabName = AppTab.CHATS.name
+                            roles.logOut()
+                        }) { Text("${role?.title} · Log out", style = MaterialTheme.typography.labelSmall) }
+                    }
                 }
             }
         },
         bottomBar = {
             Surface(modifier = Modifier.navigationBarsPadding(), color = MaterialTheme.colorScheme.surface) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                    AppTab.entries.forEach { item ->
+                    AppTab.entries.filter {
+                        it != AppTab.COMMAND || (role != null && role != AppRole.USER)
+                    }.forEach { item ->
                         TextButton(
                             onClick = { conversationId = null; tabName = item.name },
                             modifier = Modifier.weight(1f),
@@ -493,6 +550,24 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     }
                 }
             }
+            val oldestShown = System.currentTimeMillis() - 6 * 60 * 60 * 1_000L
+            areaAlerts.firstOrNull { !it.outgoing && it.createdAtMillis > oldestShown }
+                ?.takeIf { it.messageId != dismissedAlert }?.let { alert ->
+                    val located = remember(alert.messageId) { areaLocation(context) != null }
+                    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text("Official alert for your area", style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text(alert.body.text, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text(areaLabel(alert), style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer)
+                            if (!located) Text("This phone doesn't know its location, so it's showing this to be safe.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer)
+                            TextButton(onClick = { dismissedAlert = alert.messageId }) { Text("Dismiss") }
+                        }
+                    }
+                }
             if (keyWarnings.isNotEmpty()) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -686,6 +761,35 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     },
                     onAskQuestion = { target -> questionError = null; questionFor = target },
                 )
+                AppTab.COMMAND -> CommandScreen(
+                    role = role ?: AppRole.USER,
+                    here = here,
+                    needHelp = alerts.filter { !it.outgoing }.sortedByDescending { it.createdAtMillis },
+                    sentAlerts = areaAlerts.filter { it.outgoing },
+                    nameOf = ::nameOf,
+                    sending = sendingAlert,
+                    onRefreshLocation = ::refreshHere,
+                    onSend = { alert ->
+                        val repository = services?.repository
+                        if (repository != null && !sendingAlert) {
+                            sendingAlert = true
+                            scope.launch {
+                                try {
+                                    val id = withContext(Dispatchers.IO) { repository.sendAreaAlert(alert) }
+                                    record("Area alert stored: $id")
+                                    notifyUser("Alert sent. Only phones in this area will show it.")
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    record("Area alert failed: ${error.message}")
+                                    notifyUser("The alert wasn't sent. Check Debug.")
+                                } finally {
+                                    sendingAlert = false
+                                }
+                            }
+                        }
+                    },
+                )
                 AppTab.DEBUG -> DebugScreen(
                     logs = log.toList(),
                     connectedCount = connected,
@@ -701,6 +805,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         else -> "${debugAllowlist?.size} stable device IDs allowed"
                     },
                     onTopology = { topologyError = null; topologyOpen = true },
+                    testLocation = testLocation?.let { (latitude, longitude) -> "$latitude, $longitude" },
+                    onTestLocation = { testLocationOpen = true },
                     dashboardStatus = dashboardStatus,
                     onDashboard = { dashboardError = null; dashboardOpen = true },
                     onClear = { log.clear() },
@@ -874,6 +980,23 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             onDismiss = { questionFor = null },
         )
     }
+
+    if (testLocationOpen && debugTools) TestLocationDialog(
+        current = testLocation,
+        onSave = { latitude, longitude ->
+            testLocations.save(latitude, longitude)
+            testLocation = latitude to longitude
+            testLocationOpen = false
+            refreshHere()
+        },
+        onClear = {
+            testLocations.clear()
+            testLocation = null
+            testLocationOpen = false
+            refreshHere()
+        },
+        onDismiss = { testLocationOpen = false },
+    )
 
     if (topologyOpen && debugTools && services != null) DebugTopologyDialog(
         allowed = debugAllowlist,

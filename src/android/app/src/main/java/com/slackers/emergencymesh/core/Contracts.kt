@@ -131,6 +131,9 @@ interface MessageRepository {
     val contacts: Flow<List<ContactCard>>
     val sosAlerts: Flow<List<ChatMessage>>
 
+    /** Official alerts this phone showed or sent, newest first. */
+    val areaAlerts: Flow<List<ChatMessage>>
+
     /** The newest received messages, newest first, so a locked phone can alert its owner. */
     val recentIncoming: Flow<List<ChatMessage>>
 
@@ -147,6 +150,9 @@ interface MessageRepository {
     suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String
     suspend fun sendSos(body: MessageBody): String
     suspend fun saveContact(card: ContactCard)
+
+    /** Warns everyone in one area. It needs a responder or admin login. */
+    suspend fun sendAreaAlert(alert: AreaAlert): String
 
     /** Asks a phone to ring. It stays silent unless its own SOS is still active. */
     suspend fun sendCallOut(targetDeviceId: String)

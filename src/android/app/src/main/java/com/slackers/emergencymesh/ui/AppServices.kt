@@ -7,6 +7,7 @@ import com.slackers.emergencymesh.background.TalkBackControl
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MeshTransport
 import com.slackers.emergencymesh.core.ContactKeyWarning
+import com.slackers.emergencymesh.security.RoleSession
 import com.slackers.emergencymesh.core.MessageRepository
 import com.slackers.emergencymesh.core.MessageSecurity
 import com.slackers.emergencymesh.transport.LocalDevice
@@ -19,6 +20,7 @@ data class AppServices(
     val transport: MeshTransport,
     val device: LocalDevice,
     val session: MeshSession,
+    val roles: RoleSession? = null,
     val dashboard: DashboardConnection? = null,
     val noApp: NoAppSosControl? = null,
     val talkBack: TalkBackControl? = null,

@@ -5,6 +5,7 @@ import com.slackers.emergencymesh.core.ContactCardService
 import com.slackers.emergencymesh.data.EmergencyMeshDatabase
 import com.slackers.emergencymesh.data.RoomContactBook
 import com.slackers.emergencymesh.engine.MessageRepositoryImpl
+import com.slackers.emergencymesh.security.RoleSession
 import com.slackers.emergencymesh.security.SecurityProvider
 import com.slackers.emergencymesh.transport.LocalDeviceStore
 import com.slackers.emergencymesh.transport.NearbyMeshTransport
@@ -13,6 +14,7 @@ import com.slackers.emergencymesh.ui.EngineLifecycle
 import com.slackers.emergencymesh.ui.MessageStatusTimes
 import com.slackers.emergencymesh.ui.SosScanSessionStore
 import com.slackers.emergencymesh.ui.StoredMessages
+import com.slackers.emergencymesh.ui.areaLocation
 import com.slackers.emergencymesh.ui.isDebugBuild
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,7 @@ internal object MeshRuntime {
         val securityResult = runCatching { SecurityProvider.create(context) }
         val security = securityResult.getOrNull()
         val sosSession = SosScanSessionStore(context)
+        val roles = RoleSession()
         val repository = security?.let {
             MessageRepositoryImpl(
                 dao = dao,
@@ -46,6 +49,12 @@ internal object MeshRuntime {
                 security = it,
                 scope = scope,
                 acceptsCallOut = { sosSession.readUntil() > System.currentTimeMillis() },
+                signAsRole = roles::sign,
+                verifiesRole = roles::verifies,
+                insideArea = { alert ->
+                    // Unknown is treated as inside: a false warning costs less than a missed one.
+                    areaLocation(context)?.let { alert.covers(it.latitude, it.longitude) } ?: true
+                },
             )
         }
         val contactCards = security?.let { ContactCardService(transport, it, RoomContactBook(dao)) }
@@ -66,6 +75,7 @@ internal object MeshRuntime {
                 scope = scope,
             ),
             dashboard = repository?.let { DashboardConnection.start(dashboardLink, it, scope) },
+            roles = roles,
             noApp = repository?.let { NoAppSosControl(context, scope) },
             talkBack = repository?.let { TalkBackControl(context) },
             security = security,

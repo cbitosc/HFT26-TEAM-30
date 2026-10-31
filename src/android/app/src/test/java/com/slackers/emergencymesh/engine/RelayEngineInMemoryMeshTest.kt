@@ -1,5 +1,6 @@
 package com.slackers.emergencymesh.engine
 
+import com.slackers.emergencymesh.core.AreaAlert
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.ContactExchange
@@ -297,6 +298,157 @@ class RelayEngineInMemoryMeshTest {
             if (!gatedTransportA.releaseFirstSend.isCompleted) gatedTransportA.releaseFirstSend.complete(Unit)
             repoA.stop()
             repoB.stop()
+        }
+    }
+
+    /** A responder at A, a relay outside the area at B, and a person inside it at C. */
+    private inner class AreaLine(
+        scope: TestScope,
+        sign: (ByteArray) -> ByteArray? = { byteArrayOf(7) },
+        verify: (ByteArray, ByteArray) -> Boolean = { _, signature -> signature.contentEquals(byteArrayOf(7)) },
+        bInside: Boolean = false,
+    ) {
+        val mesh = InMemoryMesh()
+        private val transportA = mesh.phone("A")
+        private val transportB = mesh.phone("B")
+        private val transportC = mesh.phone("C")
+        val daoA = InMemoryEmergencyMeshDao()
+        val daoB = InMemoryEmergencyMeshDao()
+        val daoC = InMemoryEmergencyMeshDao()
+        val repoA = MessageRepositoryImpl(
+            daoA, transportA, TestMessageSecurity(contact("A")), scope, signAsRole = sign, verifiesRole = verify,
+        )
+        val repoB = MessageRepositoryImpl(
+            daoB, transportB, TestMessageSecurity(contact("B")), scope, verifiesRole = verify, insideArea = { bInside },
+        )
+        val repoC = MessageRepositoryImpl(
+            daoC, transportC, TestMessageSecurity(contact("C")), scope, verifiesRole = verify, insideArea = { true },
+        )
+
+        suspend fun start() {
+            mesh.link("A", "B")
+            mesh.link("B", "C")
+            listOf(repoA, repoB, repoC).forEach { it.startAndAwaitReady() }
+        }
+
+        fun stop() = listOf(repoA, repoB, repoC).forEach { it.stop() }
+    }
+
+    private val floodWarning = AreaAlert("Flood warning", 17.39, 78.32, 1_000f)
+
+    @Test
+    fun anAreaAlertCrossesARelayOutsideTheAreaAndOnlyShowsInsideIt() = runTest {
+        val line = AreaLine(this)
+        try {
+            line.start()
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+
+            assertNull("B is outside, so it relays without showing", line.daoB.message(id))
+            val shown = requireNotNull(line.daoC.message(id))
+            assertEquals("Flood warning", PacketCodec.decodeBody(shown.body).text)
+            assertEquals(1, shown.hopCount)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aPhoneThatComesInRangeLaterStillGetsTheAreaAlert() = runTest {
+        val line = AreaLine(this)
+        try {
+            line.mesh.link("A", "B")
+            listOf(line.repoA, line.repoB, line.repoC).forEach { it.startAndAwaitReady() }
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+            assertNull(line.daoC.message(id))
+
+            line.mesh.link("B", "C")
+            advanceTimeBy(2_000)
+            runCurrent()
+            assertNotNull(line.daoC.message(id))
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun anAreaAlertReachesPhonesThatHaveNeverMetTheResponder() = runTest {
+        val line = AreaLine(this)
+        try {
+            line.start()
+            assertTrue("No phone here has any contacts", line.daoC.observeContacts().first().isEmpty())
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+            assertNotNull(line.daoC.message(id))
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aForgedAreaAlertIsNeitherShownNorRelayed() = runTest {
+        val line = AreaLine(this, sign = { byteArrayOf(9) })
+        try {
+            line.start()
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+            assertNull(line.daoB.message(id))
+            assertNull(line.daoC.message(id))
+            assertFalse(
+                "A forgery must stop at the first phone",
+                line.mesh.sentLog.any { it.fromDeviceId == "B" && it.packet.id == id },
+            )
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aPhoneWithoutARoleCanNotSendAnAreaAlert() = runTest {
+        val line = AreaLine(this, sign = { null })
+        try {
+            line.start()
+            val failure = runCatching { line.repoA.sendAreaAlert(floodWarning) }.exceptionOrNull()
+            assertTrue(failure is IllegalStateException)
+            assertTrue(line.mesh.sentLog.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aRepeatedAreaAlertIsHandledOnce() = runTest {
+        val line = AreaLine(this, bInside = true)
+        try {
+            line.start()
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+            val sent = line.mesh.sentLog.count { it.fromDeviceId == "B" && it.packet.id == id }
+            val relayed = line.mesh.sentLog.last { it.packet.id == id }
+            val transportB = line.mesh.phone("B")
+            transportB.send(transportB.peers.value.first { it.deviceId == "C" }.endpointId, relayed.packet)
+            runCurrent()
+            assertEquals(1, sent)
+            assertNotNull(line.daoB.message(id))
+            assertEquals(1, line.daoC.observeAreaAlerts().first().size)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun anAreaAlertIsNotRetriedOnceItHasBeenHandedOver() = runTest {
+        val line = AreaLine(this)
+        try {
+            line.start()
+            val id = line.repoA.sendAreaAlert(floodWarning)
+            runCurrent()
+            advanceTimeBy(120_000)
+            runCurrent()
+            assertEquals(1, line.mesh.sentLog.count { it.fromDeviceId == "A" && it.packet.id == id })
+        } finally {
+            line.stop()
         }
     }
 
@@ -669,6 +821,9 @@ class RelayEngineInMemoryMeshTest {
 
         override fun observeSosMessages(): Flow<List<MessageEntity>> =
             flowOf(messages.values.filter { it.type == "SOS" }.sortedByDescending { it.createdAtMillis })
+
+        override fun observeAreaAlerts(): Flow<List<MessageEntity>> =
+            flowOf(messages.values.filter { it.type == "AREA_ALERT" }.sortedByDescending { it.createdAtMillis })
 
         override fun observeRecentIncoming(limit: Int): Flow<List<MessageEntity>> =
             flowOf(messages.values.filterNot { it.outgoing }.sortedByDescending { it.createdAtMillis }.take(limit))

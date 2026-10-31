@@ -61,8 +61,45 @@ internal fun requestBackgroundRelay(context: Context) {
     }
 }
 
+/** Demo rooms rarely get a GPS fix, so debug builds can pin a location. It's off in release. */
+internal class TestLocationStore(context: Context) {
+    private val preferences = context.applicationContext
+        .getSharedPreferences("test_location", Context.MODE_PRIVATE)
+
+    fun read(): Pair<Double, Double>? {
+        val latitude = preferences.getString("latitude", null)?.toDoubleOrNull() ?: return null
+        val longitude = preferences.getString("longitude", null)?.toDoubleOrNull() ?: return null
+        return latitude to longitude
+    }
+
+    fun save(latitude: Double, longitude: Double) {
+        preferences.edit().putString("latitude", latitude.toString())
+            .putString("longitude", longitude.toString()).apply()
+    }
+
+    fun clear() {
+        preferences.edit().clear().apply()
+    }
+}
+
+private fun testLocation(context: Context): Location? {
+    if (!isDebugBuild(context)) return null
+    val (latitude, longitude) = TestLocationStore(context).read() ?: return null
+    return Location("test").apply {
+        this.latitude = latitude
+        this.longitude = longitude
+        accuracy = 10f
+        time = System.currentTimeMillis()
+        elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+    }
+}
+
+/** Good enough to decide if a phone is in an area, so it accepts an older fix than an SOS does. */
+internal fun areaLocation(context: Context): Location? = recentLocation(context, maxAgeMinutes = 6 * 60)
+
 /** A bounded last-known lookup: sending SOS never waits for a GPS fix. */
-internal fun recentLocation(context: Context): Location? {
+internal fun recentLocation(context: Context, maxAgeMinutes: Long = 2): Location? {
+    testLocation(context)?.let { return it }
     if (!hasPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) &&
         !hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
     ) return null
@@ -76,7 +113,7 @@ internal fun recentLocation(context: Context): Location? {
             }
             .filter { location ->
                 val age = now - location.elapsedRealtimeNanos
-                age in 0..TimeUnit.MINUTES.toNanos(2) &&
+                age in 0..TimeUnit.MINUTES.toNanos(maxAgeMinutes) &&
                     location.latitude.isFinite() && location.longitude.isFinite() &&
                     location.latitude in -90.0..90.0 && location.longitude in -180.0..180.0
             }

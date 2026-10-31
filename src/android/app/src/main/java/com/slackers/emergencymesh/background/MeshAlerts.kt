@@ -45,7 +45,8 @@ internal class MeshAlerts(private val context: Context) {
 
     fun show(message: ChatMessage, senderName: String?) {
         val sos = message.type == PacketType.SOS
-        if (!sos && appOnScreen()) return
+        val official = message.type == PacketType.AREA_ALERT
+        if (!sos && !official && appOnScreen()) return
         val sender = senderName?.takeIf { it.isNotBlank() } ?: "a nearby phone"
         val open = PendingIntent.getActivity(
             context,
@@ -56,11 +57,17 @@ internal class MeshAlerts(private val context: Context) {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val builder = NotificationCompat.Builder(context, if (sos) SOS_CHANNEL else MESSAGE_CHANNEL)
+        val builder = NotificationCompat.Builder(context, if (sos || official) SOS_CHANNEL else MESSAGE_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setContentIntent(open)
             .setAutoCancel(true)
-        if (sos) {
+        if (official) {
+            builder.setContentTitle("Official alert for your area")
+                .setContentText(message.body.text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message.body.text))
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        } else if (sos) {
             builder.setContentTitle("SOS from $sender")
                 .setContentText(message.body.text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message.body.text))

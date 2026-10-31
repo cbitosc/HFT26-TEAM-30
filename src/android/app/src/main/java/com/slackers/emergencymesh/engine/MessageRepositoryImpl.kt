@@ -1,5 +1,6 @@
 package com.slackers.emergencymesh.engine
 
+import com.slackers.emergencymesh.core.AreaAlert
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.MessageRepository
@@ -48,6 +49,9 @@ class MessageRepositoryImpl(
     private val scope: CoroutineScope,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val acceptsCallOut: () -> Boolean = { false },
+    private val signAsRole: (ByteArray) -> ByteArray? = { null },
+    private val verifiesRole: (ByteArray, ByteArray) -> Boolean = { _, _ -> false },
+    private val insideArea: (AreaAlert) -> Boolean = { true },
 ) : MessageRepository, MessageStatusTimeline {
     private val localCard = security.localContactCard()
     private var eventJob: Job? = null
@@ -67,6 +71,9 @@ class MessageRepositoryImpl(
     override val sosAlerts: Flow<List<ChatMessage>> = dao.observeSosMessages().map { rows ->
         rows.mapNotNull(::toChatMessage)
     }
+
+    override val areaAlerts: Flow<List<ChatMessage>> =
+        dao.observeAreaAlerts().map { rows -> rows.mapNotNull(::toChatMessage) }
 
     override val recentIncoming: Flow<List<ChatMessage>> =
         dao.observeRecentIncoming(ALERT_WINDOW).map { rows -> rows.mapNotNull(::toChatMessage) }
@@ -234,6 +241,47 @@ class MessageRepositoryImpl(
         dispatchConnectedPeers()
     }
 
+    override suspend fun sendAreaAlert(alert: AreaAlert): String {
+        require(alert.text.length <= MAX_TEXT_CHARS) { "Alert is too long" }
+        val id = UUID.randomUUID().toString()
+        val created = nowMillis()
+        val body = PacketCodec.encodeBody(alert.toBody())
+        val unsigned = Packet(
+            type = PacketType.AREA_ALERT,
+            id = id,
+            senderId = localCard.deviceId,
+            recipientId = null,
+            priority = Priority.P0_SOS,
+            createdAtMillis = created,
+            initialTtl = Priority.P0_SOS.defaultTtl,
+            retentionSeconds = AREA_ALERT_RETENTION_SECONDS,
+            ttl = Priority.P0_SOS.defaultTtl,
+            hopCount = 0,
+            encryptedBody = body,
+            signature = byteArrayOf(),
+        )
+        val signature = signAsRole(PacketCodec.signedBytes(unsigned))
+            ?: throw IllegalStateException("Log in as a responder to send area alerts")
+        val packet = unsigned.copy(signature = signature)
+        dao.saveOutgoing(
+            message = MessageEntity(
+                messageId = id,
+                conversationDeviceId = null,
+                senderId = localCard.deviceId,
+                outgoing = true,
+                type = PacketType.AREA_ALERT.name,
+                priority = Priority.P0_SOS.ordinal,
+                body = body,
+                createdAtMillis = created,
+                status = MessageStatus.PENDING.name,
+                hopCount = 0,
+            ),
+            packet = packet.toQueue(null, created, created, outgoing = true),
+        )
+        dispatchConnectedPeers()
+        return id
+    }
+
     override suspend fun saveContact(card: ContactCard) {
         dao.putContact(
             ContactEntity(
@@ -283,7 +331,9 @@ class MessageRepositoryImpl(
                 dispatched++
                 // ACK packets have no app-level ACK of their own. A successful byte transfer is
                 // therefore terminal for this immediate peer; failed sends get at most three tries.
-                val terminalAck = packet.type.isAck &&
+                // An area alert reaches strangers who can't sign a receipt, so it's one-shot too.
+                val oneShot = packet.type.isAck || packet.type == PacketType.AREA_ALERT
+                val terminalAck = oneShot &&
                     (sendResult == SendResult.TransportComplete || attempt >= MAX_ACK_ATTEMPTS)
                 // A relay node took custody and never sends receipts, so this peer is finished.
                 val finished = terminalAck || sendResult == SendResult.Stored
@@ -316,6 +366,10 @@ class MessageRepositoryImpl(
         if (packet.type == PacketType.CONTACT_CARD) return
         if (!isValidHopState(packet)) return
         val source = transport.peers.value.firstOrNull { it.endpointId == fromEndpointId } ?: return
+        if (packet.type == PacketType.AREA_ALERT) {
+            receiveAreaAlert(packet, source)
+            return
+        }
         val sender = dao.contact(packet.senderId)?.let(::toCard) ?: return
         if (!sender.verified || !security.verify(sender, PacketCodec.signedBytes(packet), packet.signature)) return
 
@@ -407,6 +461,52 @@ class MessageRepositoryImpl(
     /** Ringing and speaking both give away where a person is, so they share this rule. */
     private fun mayActOn(packet: Packet, now: Long): Boolean =
         abs(now - packet.createdAtMillis) <= CALL_OUT_MAX_AGE_MS && acceptsCallOut()
+
+    /**
+     * A responder is rarely a saved contact, so the role signature replaces the contact check.
+     * Every phone relays a genuine alert, because the area may lie beyond it, but only phones
+     * inside the area keep and show it.
+     */
+    private suspend fun receiveAreaAlert(packet: Packet, source: PeerInfo) {
+        if (!verifiesRole(PacketCodec.signedBytes(packet), packet.signature)) return
+        val now = nowMillis()
+        val alert = runCatching { PacketCodec.decodeBody(packet.encryptedBody) }.getOrNull()
+            ?.let(AreaAlert::fromBody) ?: return
+        dao.putPeerReceipt(
+            com.slackers.emergencymesh.data.PeerReceiptEntity(
+                packetId = packet.id,
+                peerDeviceId = source.deviceId,
+                acknowledgedAtMillis = now,
+                attemptCount = 0,
+                nextAttemptAtMillis = now,
+            ),
+        )
+        val inserted = dao.recordSeen(
+            SeenPacketEntity(
+                packetId = packet.id,
+                firstSeenAtMillis = now,
+                expiresAtMillis = now + packet.retentionSeconds * 1_000L,
+            ),
+        )
+        if (inserted == -1L) return
+        if (insideArea(alert)) {
+            dao.putMessage(
+                MessageEntity(
+                    messageId = packet.id,
+                    conversationDeviceId = null,
+                    senderId = packet.senderId,
+                    outgoing = false,
+                    type = PacketType.AREA_ALERT.name,
+                    priority = packet.priority.ordinal,
+                    body = packet.encryptedBody,
+                    createdAtMillis = packet.createdAtMillis,
+                    status = MessageStatus.DELIVERED.name,
+                    hopCount = packet.hopCount,
+                ),
+            )
+        }
+        if (packet.ttl > 0) enqueueForward(packet.forwarded(), source.deviceId, now)
+    }
 
     private suspend fun handleAck(packet: Packet, source: PeerInfo, now: Long) {
         val referencedId = packet.refMessageId ?: return
@@ -593,6 +693,7 @@ class MessageRepositoryImpl(
 
     private companion object {
         const val ALERT_WINDOW = 20
+        const val AREA_ALERT_RETENTION_SECONDS = 6 * 60 * 60
         const val CALL_OUT_RETENTION_SECONDS = 120
         const val CALL_OUT_MAX_AGE_MS = 5 * 60 * 1_000L
         const val DISPATCH_BATCH_SIZE = 32

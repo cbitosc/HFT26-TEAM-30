@@ -16,7 +16,7 @@ const val MAX_TTL = 10
 
 enum class PacketType {
     MESSAGE, SOS, ACK_SENT, ACK_RELAYED, ACK_DELIVERED, SOS_CANCEL, SAFE, CONTACT_CARD, CALL_OUT,
-    TALK_BACK;
+    TALK_BACK, AREA_ALERT;
 
     val isAck: Boolean
         get() = this == ACK_SENT || this == ACK_RELAYED || this == ACK_DELIVERED

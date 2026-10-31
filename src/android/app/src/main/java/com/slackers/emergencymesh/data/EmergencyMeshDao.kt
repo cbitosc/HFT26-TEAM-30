@@ -25,6 +25,9 @@ interface EmergencyMeshDao {
     @Query("SELECT * FROM messages WHERE type = 'SOS' ORDER BY createdAtMillis DESC")
     fun observeSosMessages(): Flow<List<MessageEntity>>
 
+    @Query("SELECT * FROM messages WHERE type = 'AREA_ALERT' ORDER BY createdAtMillis DESC")
+    fun observeAreaAlerts(): Flow<List<MessageEntity>>
+
     @Query("SELECT * FROM messages WHERE outgoing = 0 ORDER BY createdAtMillis DESC LIMIT :limit")
     fun observeRecentIncoming(limit: Int): Flow<List<MessageEntity>>
 

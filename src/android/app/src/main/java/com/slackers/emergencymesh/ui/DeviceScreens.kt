@@ -218,6 +218,8 @@ internal fun DebugScreen(
     showTopologyTools: Boolean,
     allowlistSummary: String,
     onTopology: () -> Unit,
+    testLocation: String?,
+    onTestLocation: () -> Unit,
     dashboardStatus: String?,
     onDashboard: () -> Unit,
 ) {
@@ -231,6 +233,10 @@ internal fun DebugScreen(
             Text("DEBUG TOPOLOGY", style = MaterialTheme.typography.labelLarge)
             Text(allowlistSummary, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onTopology) { Text("Configure allowed devices") }
+            Text("TEST LOCATION", style = MaterialTheme.typography.labelLarge)
+            Text(testLocation?.let { "This debug build is pretending to be at $it." }
+                ?: "Using the phone's real location.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onTestLocation) { Text("Set test location") }
         }
         dashboardStatus?.let { status ->
             item {
