@@ -1,6 +1,6 @@
 # EmergencyMesh mentoring guide
 
-Read this before the mentoring evaluation. Tested results are as of 5:07 AM on Saturday 31 October. Update anything that changes, and never claim something that hasn't been tested.
+Read this before the mentoring evaluation. Tested results are as of 5:55 AM on Saturday 31 October. Update anything that changes, and never claim something that hasn't been tested.
 
 ## The 30-second pitch
 
@@ -58,9 +58,9 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 | 3 | Mesh relay | Controlled flooding with TTL, duplicate removal and no echo | A to C and C to A through B, 1 hop, about 2.5 seconds |
 | 4 | SOS | Broadcast to all enrolled phones, with optional location | Reached both phones, 0 and 1 hops, and worked with location denied |
 | 5 | Priority | SOS, Emergency, Regular. The queue re-checks after every send | SOS arrived before 20 queued messages |
-| 6 | Delivery status | Pending, Sent, Relayed, Delivered from real acknowledgements | Pending, Sent and Delivered on screen. Check the Relayed status before saying it's shown |
+| 6 | Delivery status | Pending, Sent, Relayed, Delivered from real acknowledgements | All 4 stages shown with times in the status popup |
 | Security | Encryption and authentication | Tink encryption, Ed25519 signatures, fingerprint verification | Relay database held no message text, and a forged packet was rejected |
-| 7 | Battery | Scans 15 seconds in each minute, and pauses scanning at 3 links | Scanning cycle seen. Use the measured result once it exists |
+| 7 | Battery | Scans 15 seconds in each minute, pauses at 3 links, and scans continuously during an active SOS | Scanning modes confirmed. Use the measured result once it exists |
 | 8 | Recovery | Queue stored in Room, and retries when a peer reconnects | Pending survived a restart, then delivered exactly once |
 
 ## Security in plain language
@@ -114,6 +114,7 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 - [ ] Same group code on all 3 phones
 - [ ] Debug topology set: A allows B, C allows B, B allows A and C
 - [ ] Debug screen shows A with 1 connection, B with 2, C with 1
+- [ ] Screen timeout is long enough, because a locked phone stops its radio
 - [ ] Backup video ready offline
 
 **Don't start from scratch in front of a mentor.** Pairing, enrollment and topology take several minutes, so do them beforehand.
@@ -126,7 +127,7 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 | 2 | Show connection counts | "A and C can't reach each other, so B has to carry messages." |
 | 3 | Send from A to C | "This is encrypted so only C can read it." |
 | 4 | Show C receive it with 1 hop | "It came through B." |
-| 5 | Show Delivered on A | "That appears only after C confirms it." |
+| 5 | Show Delivered on A, then tap it for the timeline | "Delivered appears only after C confirms it, and this shows each stage." |
 | 6 | Send SOS from A | "SOS reaches everyone enrolled, and goes first." |
 | 7 | Stop C's radio, send, restart C's radio | "With no path it stays Pending, then delivers on its own." |
 | 8 | Show the test matrix | "Here's what we proved, and what we didn't." |
@@ -215,7 +216,7 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 
 **How do you trust a new contact?** Phones swap public cards automatically, then two people compare fingerprints. Until then, direct messages are blocked.
 
-**What if a known contact's keys change?** The app keeps the stored keys and doesn't replace them automatically.
+**What if a known contact's keys change?** The app keeps the stored keys, doesn't replace them automatically, and shows a `Contact keys changed` warning.
 
 **Where are private keys stored?** On the phone only, encrypted by a master key in the Android Keystore. They're never sent.
 
@@ -233,11 +234,11 @@ If C is unreachable, B keeps the packet and tries again when C appears. That's c
 
 ### Battery and background
 
-**How do you save battery?** Discovery runs in 15-second bursts each minute, and pauses when a phone has 3 connections. Retries back off up to 60 seconds, and acknowledgement retries are capped.
+**How do you save battery?** Discovery runs in 15-second bursts each minute, and pauses when a phone has 3 connections. Retries back off up to 60 seconds, and acknowledgement retries are capped. During an active SOS it scans continuously until the user taps **End SOS scanning**.
 
 **How much battery does it save?** Use the measured comparison. If it isn't finished, say so.
 
-**Does it work in the background?** Check the current build first. If keep-alive isn't merged, say: "The app must stay open in this prototype, and background operation is our next step."
+**Does it work in the background?** Not yet. The app must stay open with the phone unlocked in this prototype, because the radio stops when it leaves the screen. Background operation is our next step.
 
 ### Process
 
@@ -277,7 +278,7 @@ If you don't know an answer, say: "I'm not certain. Here's what we tested, and h
 | Need | Location |
 | --- | --- |
 | Results by requirement | `docs/TEST_MATRIX.md` |
-| Latest phone evidence | `docs/evidence/required-features.md` |
+| Latest phone evidence | `docs/evidence/final-build.md` and `docs/evidence/required-features.md` |
 | Relay proof | `docs/evidence/relay-a-to-c.md` |
 | Security detail | `docs/evidence/tink-security.md` |
 | Packet and status rules | `docs/CONTRACTS.md` |
