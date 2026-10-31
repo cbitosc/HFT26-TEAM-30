@@ -11,8 +11,13 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dashboard import QuickServer  # noqa: E402
 
 CRITICAL_WORDS = ("trapped", "bleeding", "collapsed", "boat", "smoke", "बेहोश", "मलबे", "फँसे", "స్పృహ", "శిథిలాల", "చిక్కుకున్నాం", "మంటలు")
 HIGH_WORDS = ("insulin", "missing", "doctor", "no food", "दवा", "पुलिस", "కనిపించడం", "డాక్టర్")
@@ -84,7 +89,7 @@ class FakeFeatherless:
                 self.end_headers()
                 self.wfile.write(data)
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        self.server = QuickServer(("127.0.0.1", port), Handler)
         self.base_url = "http://127.0.0.1:%d/v1" % self.server.server_port
         self._thread: Optional[threading.Thread] = None
 

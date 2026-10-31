@@ -15,6 +15,7 @@ import json
 import os
 import queue
 import socket
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -148,6 +149,15 @@ class Dashboard:
         return {"added": added, "repeats": len(accepted) - added}
 
 
+class QuickServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        # The standard version looks up this laptop's name, which stalls for seconds offline.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "EmergencyMeshDashboard"
     dashboard: Dashboard
@@ -271,8 +281,7 @@ def build_server(
     analyst = Analyst(store, assistant)
     dashboard = Dashboard(store, analyst, upload_token)
     handler = type("BoundHandler", (Handler,), {"dashboard": dashboard})
-    server = ThreadingHTTPServer((host, port), handler)
-    server.daemon_threads = True
+    server = QuickServer((host, port), handler)
     analyst.start()
     return server
 
@@ -308,7 +317,7 @@ def main() -> None:
     print("Dashboard: http://127.0.0.1:%d" % options.port)
     if options.lan:
         print("Phones upload to: http://%s:%d" % (lan_address(), options.port))
-    print("AI: %s" % ("on, " + assistant.model if assistant.configured else "off, no Featherless key"))
+    print("AI: %s" % ("on, " + assistant.model if assistant.configured else "off, no Featherless key"), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
