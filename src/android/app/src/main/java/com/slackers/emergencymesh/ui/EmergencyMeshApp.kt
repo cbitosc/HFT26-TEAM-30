@@ -65,6 +65,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
@@ -90,7 +91,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var tabName by rememberSaveable { mutableStateOf(AppTab.CHATS.name) }
     var conversationId by rememberSaveable { mutableStateOf<String?>(null) }
     val tab = AppTab.valueOf(tabName)
-    var discoveryRequested by remember { mutableStateOf(false) }
+    val runningFlow = remember(services) { services?.session?.running ?: MutableStateFlow(false) }
+    val discoveryRequested by runningFlow.collectAsStateWithLifecycle()
+    val keptAliveFlow = remember(services) { services?.session?.keptAlive ?: MutableStateFlow(false) }
+    val keptAlive by keptAliveFlow.collectAsStateWithLifecycle()
     var startingConnection by remember { mutableStateOf(false) }
     var connectionStartJob by remember { mutableStateOf<Job?>(null) }
     var sendingDirect by remember { mutableStateOf(false) }
@@ -112,11 +116,15 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var debugAllowlist by remember(services) { mutableStateOf(services?.readDebugAllowlist?.invoke()) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
     var device by remember(services) { mutableStateOf(services?.device) }
-    var discoveryMode by remember(services) { mutableStateOf(DiscoveryMode.BALANCED) }
+    var discoveryMode by remember(services) {
+        mutableStateOf(services?.readDiscoveryMode?.invoke() ?: DiscoveryMode.BALANCED)
+    }
+    var sosModeApplied by remember(services) { mutableStateOf(false) }
     val sosScanSession = remember(context) { SosScanSessionStore(context) }
     var activeSosUntil by remember(sosScanSession) { mutableStateOf(sosScanSession.readUntil()) }
     val sosScanningActive = activeSosUntil > 0L
     var radioProblems by remember(context) { mutableStateOf(RadioReadiness.check(context)) }
+    var batteryRestricted by remember(context) { mutableStateOf(isBatteryRestricted(context)) }
     val log = remember { mutableStateListOf<String>() }
 
     fun record(message: String) {
@@ -131,11 +139,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
 
     fun stopConnection() {
         connectionStartJob?.cancel()
-        runCatching { services?.transport?.stop() }
-        runCatching { services?.engineLifecycle?.stop?.invoke() }
-        runCatching { services?.transport?.setDiscoveryMode(DiscoveryMode.BALANCED) }
+        services?.session?.stop()
         discoveryMode = DiscoveryMode.BALANCED
-        discoveryRequested = false
         startingConnection = false
     }
 
@@ -208,9 +213,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         val remaining = scheduledUntil - System.currentTimeMillis()
         val active = remaining > 0L
         try {
-            val mode = if (active) DiscoveryMode.CONTINUOUS else DiscoveryMode.BALANCED
-            services?.transport?.setDiscoveryMode(mode)
-            discoveryMode = mode
+            // Reopening the screen must keep the mode the user chose while the mesh ran.
+            if (active || scheduledUntil != 0L || sosModeApplied) {
+                val mode = if (active) DiscoveryMode.CONTINUOUS else DiscoveryMode.BALANCED
+                services?.transport?.setDiscoveryMode(mode)
+                discoveryMode = mode
+            }
+            sosModeApplied = active
         } catch (error: Exception) {
             record("SOS discovery mode failed: ${error.message}")
             notifyUser("Could not update SOS scanning. Check Nearby and Debug.")
@@ -220,6 +229,11 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             sosScanSession.end()
             activeSosUntil = 0L
         }
+    }
+
+    // The notification can stop the mesh without going through this screen.
+    LaunchedEffect(services, discoveryRequested) {
+        services?.readDiscoveryMode?.invoke()?.let { discoveryMode = it }
     }
 
     LaunchedEffect(services) {
@@ -236,7 +250,10 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     "Rejected data from ${event.fromEndpointId}: ${event.reason}"
                 )
                 is TransportEvent.Failure -> {
-                    stopConnection()
+                    // Off screen nobody can restart the mesh, so it keeps its links and retries.
+                    if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        stopConnection()
+                    }
                     record("Transport failure: ${event.reason}")
                     notifyUser(event.reason)
                 }
@@ -244,20 +261,20 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         }
     }
 
-    // No foreground service is part of this milestone. Stop radio work on background
-    // and require the user to start it again on returning to the app.
+    // The foreground service keeps the mesh running after this screen closes. Only stop here
+    // if Android refused that service, because the radio must never run without its notification.
     DisposableEffect(services, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) radioProblems = RadioReadiness.check(context)
-            if (event == Lifecycle.Event.ON_STOP) {
+            if (event == Lifecycle.Event.ON_RESUME) {
+                radioProblems = RadioReadiness.check(context)
+                batteryRestricted = isBatteryRestricted(context)
+            }
+            if (event == Lifecycle.Event.ON_STOP && services?.session?.keptAlive?.value != true) {
                 stopConnection()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            stopConnection()
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun startDiscovery() {
@@ -292,27 +309,16 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         startingConnection = true
         connectionStartJob = scope.launch {
             try {
-                val startRadio = {
-                    val mode = if (activeSosUntil > System.currentTimeMillis())
-                        DiscoveryMode.CONTINUOUS else discoveryMode
-                    active.transport.setDiscoveryMode(mode)
-                    discoveryMode = mode
-                    active.transport.start(radioDevice.deviceId, radioDevice.displayName)
-                }
-                val engine = active.engineLifecycle
-                if (engine != null) {
-                    engine.startBeforeTransport(startRadio)
-                    record("Engine subscribed before radio start.")
-                } else {
-                    startRadio()
-                    record("Radio setup only; engine/repository unavailable. Messaging stays disabled.")
-                }
-                discoveryRequested = true
+                val mode = if (activeSosUntil > System.currentTimeMillis())
+                    DiscoveryMode.CONTINUOUS else discoveryMode
+                active.session.start(radioDevice, mode)
+                discoveryMode = mode
+                record(if (active.engineLifecycle != null) "Engine subscribed before radio start."
+                    else "Radio setup only; engine/repository unavailable. Messaging stays disabled.")
                 permissionFeedback = null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                runCatching { active.transport.stop() }
                 record("Engine/radio start failed: ${error.message}")
                 notifyUser("Could not start the connection. Check Debug.")
             } finally {
@@ -466,12 +472,14 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     localDevice = transportDevice,
                     fingerprint = localFingerprint,
                     discoveryRequested = discoveryRequested,
+                    keptAlive = keptAlive,
                     startingConnection = startingConnection,
                     canStart = services != null && transportDevice != null &&
                         services.initializationError == null &&
                         (services.security == null || localCard != null),
                     permissionFeedback = permissionFeedback,
                     radioProblems = radioProblems.map(::radioProblemLabel),
+                    batteryRestricted = batteryRestricted,
                     discoveryMode = discoveryMode,
                     canRename = services != null && services.security == null && !discoveryRequested && !startingConnection,
                     onRename = { name ->
@@ -495,8 +503,9 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         }
                     },
                     onStart = {
-                        if (missingNearbyPermissions(context).isEmpty()) startDiscovery()
-                        else nearbyPermissionRequest.launch(nearbyPermissions().toTypedArray())
+                        val missing = missingNearbyPermissions(context) + missingNotificationPermission(context)
+                        if (missing.isEmpty()) startDiscovery()
+                        else nearbyPermissionRequest.launch(missing.toTypedArray())
                     },
                     onStop = {
                         stopConnection()
@@ -510,6 +519,7 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                             notifyUser("Pairing failed: ${error.message}")
                         }
                     },
+                    onAllowBackground = { requestBackgroundRelay(context) },
                     onSettings = {
                         context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                             Uri.parse("package:${context.packageName}")))

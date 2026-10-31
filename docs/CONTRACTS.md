@@ -91,6 +91,16 @@ transport.start(device.deviceId, device.displayName)
 
 Approved peers reconnect without another prompt. This approval only controls the radio link, so identity still depends on M4's signature checks.
 
+## Keep-alive
+
+- `MeshRuntime.get(context)` holds one set of services for the whole process. Never create a second transport or repository for the same mesh.
+- `MeshSession` starts and stops the engine and radio together. The app calls `session.start` and `session.stop`, not `transport.start` or `transport.stop`.
+- `MeshForegroundService` follows `session.running` and ends itself. Never call `stopService`, because Android crashes an app that stops a service before it reaches the foreground.
+- **M2:** only stop the mesh when the screen closes if `session.keptAlive` is false, because the radio must never run without its notification.
+- **M3:** `recentIncoming` feeds the alerts on a locked phone. A direct message alert must never contain the message text.
+
+See `docs/KEEP_ALIVE_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

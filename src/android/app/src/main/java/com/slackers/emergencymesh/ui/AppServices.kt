@@ -1,5 +1,7 @@
 package com.slackers.emergencymesh.ui
 
+import com.slackers.emergencymesh.background.MeshSession
+import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MeshTransport
 import com.slackers.emergencymesh.core.ContactKeyWarning
 import com.slackers.emergencymesh.core.MessageRepository
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 data class AppServices(
     val transport: MeshTransport,
     val device: LocalDevice,
+    val session: MeshSession,
     val repository: MessageRepository? = null,
     val security: MessageSecurity? = null,
     val engineLifecycle: EngineLifecycle? = null,
@@ -20,6 +23,7 @@ data class AppServices(
     val storedMessages: StoredMessages? = null,
     val radioLog: StateFlow<List<TransportLogEntry>>? = null,
     val readDebugAllowlist: () -> Set<String>? = { null },
+    val readDiscoveryMode: () -> DiscoveryMode = { DiscoveryMode.BALANCED },
     val initializationError: String? = null,
     val keyWarnings: StateFlow<List<ContactKeyWarning>>? = null,
     /** M3's persisted ACK history, projected for the message status popup. */

@@ -8,6 +8,7 @@ import kotlinx.coroutines.ensureActive
  * [startAndAwaitReady] MUST return only after the transport-events collector is
  * subscribed (for example, an undispatched collector or M3's readiness signal).
  * Merely launching a collector for later execution does not satisfy this API.
+ * The process-wide mesh session owns this lifecycle, so the screen no longer starts it directly.
  * [stop] must be non-blocking and idempotent; restart must be supported.
  */
 class EngineLifecycle(

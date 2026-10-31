@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.slackers.emergencymesh.background.MeshRuntime
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MalformedPacketException
 import com.slackers.emergencymesh.core.MessageBody
@@ -71,6 +72,8 @@ class MeshTestActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         device = LocalDeviceStore.load(this)
+        // The mesh now outlives its screen, and only one owner can use the radio at a time.
+        MeshRuntime.get(this).session.stop()
         transport = NearbyMeshTransport.create(this)
         refreshProblems()
         lifecycleScope.launch { transport.events.collect(::handleEvent) }

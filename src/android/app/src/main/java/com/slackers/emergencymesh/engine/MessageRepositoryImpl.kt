@@ -55,6 +55,9 @@ class MessageRepositoryImpl(
         rows.mapNotNull(::toChatMessage)
     }
 
+    override val recentIncoming: Flow<List<ChatMessage>> =
+        dao.observeRecentIncoming(ALERT_WINDOW).map { rows -> rows.mapNotNull(::toChatMessage) }
+
     override fun conversation(deviceId: String): Flow<List<ChatMessage>> =
         dao.observeConversation(deviceId).map { rows -> rows.mapNotNull(::toChatMessage) }
 
@@ -510,6 +513,7 @@ class MessageRepositoryImpl(
     }
 
     private companion object {
+        const val ALERT_WINDOW = 20
         const val DISPATCH_BATCH_SIZE = 32
         const val MAX_ACK_ATTEMPTS = 3
         const val INITIAL_RETRY_MS = 1_000L

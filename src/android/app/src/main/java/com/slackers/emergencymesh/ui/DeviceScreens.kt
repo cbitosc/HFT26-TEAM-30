@@ -38,10 +38,12 @@ internal fun NearbyScreen(
     localDevice: LocalDevice?,
     fingerprint: String?,
     discoveryRequested: Boolean,
+    keptAlive: Boolean,
     startingConnection: Boolean,
     canStart: Boolean,
     permissionFeedback: String?,
     radioProblems: List<String>,
+    batteryRestricted: Boolean,
     discoveryMode: DiscoveryMode,
     canRename: Boolean,
     onRename: (String) -> Unit,
@@ -50,6 +52,7 @@ internal fun NearbyScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRespond: (PeerInfo, Boolean) -> Unit,
+    onAllowBackground: () -> Unit,
     onSettings: () -> Unit,
     onCopyIdentity: () -> Unit,
     onEnroll: () -> Unit,
@@ -97,13 +100,19 @@ internal fun NearbyScreen(
                 OutlinedButton(onClick = onStop, enabled = canStart,
                     modifier = Modifier.weight(1f)) { Text("Stop") }
             }
-            Text(if (discoveryRequested) "Discovery requested · check devices below for actual connections."
-                else "Discovery not requested from this screen.",
-                style = MaterialTheme.typography.bodySmall)
+            Text(when {
+                discoveryRequested && keptAlive -> "Mesh on · it keeps relaying while this phone is locked. Stop it here or from the notification."
+                discoveryRequested -> "Mesh on · Android refused background running, so keep this app open."
+                else -> "Mesh off · start discovery to send and relay messages."
+            }, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onSettings) { Text("App permissions and settings") }
             TextButton(onClick = onRecheck) { Text("Recheck device readiness") }
         }
         items(radioProblems) { problem -> Notice("Device readiness", problem) }
+        if (batteryRestricted) item {
+            Notice("Background relay", "Battery optimization can stop relaying while this phone is locked.")
+            TextButton(onClick = onAllowBackground) { Text("Allow background relay") }
+        }
         item {
             Text("DISCOVERY MODE", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

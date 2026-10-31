@@ -372,6 +372,9 @@ class RelayEngineInMemoryMeshTest {
         override fun observeSosMessages(): Flow<List<MessageEntity>> =
             flowOf(messages.values.filter { it.type == "SOS" }.sortedByDescending { it.createdAtMillis })
 
+        override fun observeRecentIncoming(limit: Int): Flow<List<MessageEntity>> =
+            flowOf(messages.values.filterNot { it.outgoing }.sortedByDescending { it.createdAtMillis }.take(limit))
+
         override suspend fun message(messageId: String) = messages[messageId]
         override fun observeMessage(messageId: String): Flow<MessageEntity?> = flowOf(messages[messageId])
         override suspend fun putMessage(message: MessageEntity) { messages[message.messageId] = message }

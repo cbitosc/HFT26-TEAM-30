@@ -125,6 +125,9 @@ interface MessageRepository {
     val contacts: Flow<List<ContactCard>>
     val sosAlerts: Flow<List<ChatMessage>>
 
+    /** The newest received messages, newest first, so a locked phone can alert its owner. */
+    val recentIncoming: Flow<List<ChatMessage>>
+
     fun conversation(deviceId: String): Flow<List<ChatMessage>>
     suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String
     suspend fun sendSos(body: MessageBody): String
