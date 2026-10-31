@@ -15,8 +15,10 @@ import com.slackers.emergencymesh.ui.AppServices
 import com.slackers.emergencymesh.ui.EmergencyMeshApp
 import com.slackers.emergencymesh.ui.EmergencyMeshTheme
 import com.slackers.emergencymesh.ui.EngineLifecycle
+import com.slackers.emergencymesh.ui.MessageStatusTimes
 import com.slackers.emergencymesh.ui.StoredMessages
 import com.slackers.emergencymesh.ui.isDebugBuild
+import kotlinx.coroutines.flow.map
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,6 +60,15 @@ class MainActivity : ComponentActivity() {
             radioLog = transport.log,
             readDebugAllowlist = { transport.debugAllowlist },
             keyWarnings = contactCards?.keyWarnings,
+            statusTimes = repository?.let { engine ->
+                { messageId: String ->
+                    engine.observeStatusTimes(messageId).map { times ->
+                        times?.let {
+                            MessageStatusTimes(it.sentAtMillis, it.relayedAtMillis, it.deliveredAtMillis)
+                        }
+                    }
+                }
+            },
         )
     }
 }

@@ -43,7 +43,7 @@ internal fun MessageStatusTimeline(message: ChatMessage, times: MessageStatusTim
         }
         Text("Times are recorded on this phone. Missing stages are not inferred from the current status.",
             style = MaterialTheme.typography.bodySmall)
-        if (times == null) Text("Acknowledgement times are not available in this build.",
+        if (times == null) Text("No acknowledgement timing record is available for this message.",
             style = MaterialTheme.typography.bodySmall)
     }
 }

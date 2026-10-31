@@ -22,6 +22,6 @@ data class AppServices(
     val readDebugAllowlist: () -> Set<String>? = { null },
     val initializationError: String? = null,
     val keyWarnings: StateFlow<List<ContactKeyWarning>>? = null,
-    /** Wire M3's persisted ACK history here when its timestamp API is published. */
+    /** M3's persisted ACK history, projected for the message status popup. */
     val statusTimes: ((messageId: String) -> Flow<MessageStatusTimes?>)? = null,
 )
