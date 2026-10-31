@@ -45,6 +45,9 @@ During disasters, power cuts or network failures, conventional communication can
 8. Optional rescue tools add Call-Out, Talk-Back, Last Breath and clearly labelled unverified no-app SOS intake.
 9. An optional laptop node can store and carry encrypted packets, and a dashboard can receive explicitly enabled SOS uploads.
 10. The dashboard can add AI-assisted triage and translation, while keeping the original alert visible and continuing to work with AI off.
+11. User, Responder and Admin roles can be unlocked offline. Responders sign an area alert, which every phone relays; only phones inside the area display it when location is known.
+12. The Admin control screen shows each SOS location as distance and direction from the admin's phone without maps or internet.
+13. Direct messages learn a route from verified traffic and try the fewest-hop path first. Other paths open after an eight-second wait if delivery does not complete; SOS and area alerts continue to flood.
 
 ## Architecture
 
@@ -55,7 +58,10 @@ flowchart TD
     Repo --> Engine["Message engine: queue, relay, acknowledgements"]
     Engine --> Security["MessageSecurity: Tink, Android Keystore"]
     Engine --> Transport["MeshTransport: Nearby Connections"]
+    Engine --> Routes["Direct-message route table"]
     Transport <--> Peers["Nearby phones"]
+    Repo --> Control["Offline User, Responder and Admin controls"]
+    Control --> Area["Signed area alerts and SOS direction"]
     Engine <--> Laptop["Optional laptop relay node"]
     Repo --> Upload["Optional SOS uploader"]
     Upload --> Dashboard["Volunteer dashboard"]
@@ -72,6 +78,8 @@ flowchart TD
 | Background runtime | `app`, `transport` | Foreground service and phone-brand keep-alive controls |
 | Rescue extras | `core`, `engine`, `ui` | Call-Out, Talk-Back, Last Breath and no-app SOS intake |
 | Laptop node and dashboard | `src/dashboard` | Optional packet custody, SOS display and AI-assisted review |
+| Roles and area alerts | `security`, `core`, `ui` | Offline role checks, signed area alerts, admin SOS distance and direction |
+| Routing | `engine` | Fewest-hop route for direct messages, with a flood fallback |
 
 See [the contracts](docs/CONTRACTS.md) for packet rules and status meanings.
 
@@ -154,6 +162,11 @@ Phone A <----> Phone B <----> Phone C
 - This is a hackathon prototype, not a production disaster network, and it has had no independent security review.
 - The laptop node and dashboard passed through a USB-backed test path; real phone-to-laptop Wi-Fi is still untested.
 - The dashboard ran with AI off because no real model key was available, so no AI accuracy is claimed.
+- Offline logins and area alerts were tested using debug test locations indoors. Real GPS area boundaries were not tested.
+- Shortest routes were tested on three real phones and five simulated phones, not 1,000. The first message to a new phone still spreads through all paths.
+- An SOS includes a location only when its phone has a fix from the previous two minutes; otherwise the admin sees that no location was sent.
+
+The [mentor-changes phone test](docs/evidence/mentor-fixes.md) records the role, area, admin location and routing results and their limits.
 
 ## Demo Video
 

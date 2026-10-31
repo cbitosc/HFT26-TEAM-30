@@ -1,6 +1,6 @@
 # Requirement test matrix
 
-Status as of 31 October 2026, 12:53 IST. A requirement is **Pass** only where the cited real-phone test passed. **Partial** means that implementation exists but measurement or device coverage is incomplete.
+Status as of 31 October 2026, 13:38 IST. A requirement is **Pass** only where the cited real-phone test passed. **Partial** means that implementation exists but measurement or device coverage is incomplete.
 
 ## Required system
 
@@ -15,6 +15,10 @@ Status as of 31 October 2026, 12:53 IST. A requirement is **Pass** only where th
 | Security | **Pass for tested build** | Tink was integrated; relay storage contained no tested message text; a packet with an invalid signature was rejected | No independent security review or forward secrecy |
 | 7. Battery efficiency | **Partial** | Balanced and Continuous scan modes worked; foreground keep-alive worked on Samsung and on vivo after settings changes | No battery comparison; OnePlus froze the app while locked |
 | 8. Recovery and synchronization | **Pass** | A Pending message survived restart, delivered after reconnect and appeared exactly once | Reconnect took up to about 40 seconds in one run |
+| Fewest-hop direct routing | **Pass in tested topology** | In a three-phone triangle, two direct messages used the zero-hop link without appearing on B; after that link was removed, the next went through B. Five simulated phones checked the short path and fallback | The first message spreads through all paths; 1,000 phones were not tested |
+| Offline User, Responder and Admin logins | **Pass in tested cases** | Wrong role code was refused; Responder and Admin opened their own controls; User needed no code; logging out kept the mesh running | The app stores public keys only, but shared responder credentials cannot revoke one person |
+| Signed area alerts | **Pass with debug locations** | B relayed without showing the alert; C inside the area displayed it after one hop in 3.0 seconds. A locked Samsung inside another area alerted in 2.1 seconds | Indoor test locations, not real GPS boundaries; a phone without location displays the alert |
+| Admin SOS location | **Pass with debug locations** | Admin saw a test SOS at 19.6 km east, with coordinates and accuracy; a no-location SOS showed its hop count | SOS has coordinates only when the sender's fix is under two minutes old |
 
 ## Optional extras
 
@@ -43,6 +47,18 @@ Status as of 31 October 2026, 12:53 IST. A requirement is **Pass** only where th
 | Key-change warning | Warning appeared and the stored key was kept |
 | Stability | Zero app crash lines on all three phones during the final required-build run |
 
+## Mentor changes build
+
+| Check | Result |
+| --- | --- |
+| Build | `member1/mentor-fixes` at `8a0fe65`, with [phone evidence](evidence/mentor-fixes.md) committed afterwards |
+| Unit tests | 249 run on debug and release, 0 failed, 2 skipped because they need a live service |
+| Phones | vivo V2404, Samsung SM-S721B, OnePlus CPH2569 |
+| Area alert | Crossed an outside relay and appeared on the inside phone in 3.0 seconds |
+| Locked alert | Samsung inside the target area alerted in 2.1 seconds |
+| Routing | Triangle selected direct link; removing it restored the one-hop route through B |
+| Scope | Debug test locations indoors; three real and five simulated phones, not 1,000 |
+
 ## Evidence
 
 - [Final required build](evidence/final-build.md)
@@ -52,6 +68,7 @@ Status as of 31 October 2026, 12:53 IST. A requirement is **Pass** only where th
 - [Encrypted messaging](evidence/encrypted-messaging.md)
 - [Contact exchange](evidence/contact-exchange.md)
 - [Security tests](evidence/tink-security.md)
+- [Mentor changes phone test](evidence/mentor-fixes.md)
 
 ## Still unmeasured or unproven
 
