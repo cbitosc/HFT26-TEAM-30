@@ -16,6 +16,7 @@ import com.slackers.emergencymesh.core.PeerInfo
 import com.slackers.emergencymesh.core.PeerState
 import com.slackers.emergencymesh.core.Priority
 import com.slackers.emergencymesh.core.SendResult
+import com.slackers.emergencymesh.core.SpokenQuestion
 import com.slackers.emergencymesh.core.TransportEvent
 import com.slackers.emergencymesh.data.ContactEntity
 import com.slackers.emergencymesh.data.EmergencyMeshDao
@@ -55,9 +56,11 @@ class MessageRepositoryImpl(
     private val peerLocks = mutableMapOf<String, Mutex>()
     private val _incomingCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     private val _answeredCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _incomingQuestions = MutableSharedFlow<SpokenQuestion>(extraBufferCapacity = 8)
 
     override val incomingCallOuts: SharedFlow<String> = _incomingCallOuts.asSharedFlow()
     override val answeredCallOuts: SharedFlow<String> = _answeredCallOuts.asSharedFlow()
+    override val incomingQuestions: SharedFlow<SpokenQuestion> = _incomingQuestions.asSharedFlow()
 
     override val contacts: Flow<List<ContactCard>> = dao.observeContacts().map { rows -> rows.map(::toCard) }
 
@@ -117,7 +120,18 @@ class MessageRepositoryImpl(
         engineScope = scope
     }
 
-    override suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String {
+    override suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String =
+        sendText(PacketType.MESSAGE, recipientDeviceId, text, priority)
+
+    override suspend fun sendQuestion(targetDeviceId: String, text: String): String =
+        sendText(PacketType.TALK_BACK, targetDeviceId, text, Priority.P0_SOS)
+
+    private suspend fun sendText(
+        type: PacketType,
+        recipientDeviceId: String,
+        text: String,
+        priority: Priority,
+    ): String {
         require(text.length <= MAX_TEXT_CHARS) { "Message is too long" }
         val recipient = dao.contact(recipientDeviceId)?.let(::toCard)
             ?: throw IllegalArgumentException("Enroll this contact before sending")
@@ -126,7 +140,7 @@ class MessageRepositoryImpl(
         val id = UUID.randomUUID().toString()
         val created = nowMillis()
         val packet = seal(
-            type = PacketType.MESSAGE,
+            type = type,
             id = id,
             recipientId = recipient.deviceId,
             refMessageId = null,
@@ -349,15 +363,19 @@ class MessageRepositoryImpl(
                         conversationDeviceId = if (packet.type == PacketType.SOS) null else packet.senderId,
                         senderId = packet.senderId,
                         outgoing = false,
-                        type = packet.type.name,
+                        // A question reads like any other chat message once it arrives.
+                        type = if (packet.type.isDirectText) PacketType.MESSAGE.name else packet.type.name,
                         priority = packet.priority.ordinal,
                         body = plain,
                         createdAtMillis = packet.createdAtMillis,
-                        status = if (packet.type == PacketType.MESSAGE) MessageStatus.DELIVERED.name else MessageStatus.PENDING.name,
+                        status = if (packet.type.isDirectText) MessageStatus.DELIVERED.name else MessageStatus.PENDING.name,
                         hopCount = packet.hopCount,
-                        deliveredAtMillis = if (packet.type == PacketType.MESSAGE) now else null,
+                        deliveredAtMillis = if (packet.type.isDirectText) now else null,
                     ),
                 )
+                if (packet.type == PacketType.TALK_BACK && mayActOn(packet, now)) {
+                    _incomingQuestions.tryEmit(SpokenQuestion(packet.senderId, body.text))
+                }
             }
             if (packet.ttl > 0 && (packet.type == PacketType.SOS || !isForThisDevice(packet))) {
                 enqueueForward(packet.forwarded(), source.deviceId, now)
@@ -366,7 +384,7 @@ class MessageRepositoryImpl(
 
         // Repeat ACKs for valid duplicates so a lost receipt can recover; never ACK an ACK.
         enqueueAck(PacketType.ACK_SENT, packet, now)
-        if (isForThisDevice(packet) && (packet.type == PacketType.MESSAGE || ringing)) {
+        if (isForThisDevice(packet) && (packet.type.isDirectText || ringing)) {
             enqueueAck(PacketType.ACK_DELIVERED, packet, now)
         }
         dao.pruneOrphanedPeerReceipts()
@@ -374,11 +392,14 @@ class MessageRepositoryImpl(
 
     /** The signature already proved who called. The clock check stops a late or replayed ring. */
     private fun receiveCallOut(packet: Packet, now: Long): Boolean {
-        val fresh = abs(now - packet.createdAtMillis) <= CALL_OUT_MAX_AGE_MS
-        val accepted = fresh && acceptsCallOut()
+        val accepted = mayActOn(packet, now)
         if (accepted) _incomingCallOuts.tryEmit(packet.senderId)
         return accepted
     }
+
+    /** Ringing and speaking both give away where a person is, so they share this rule. */
+    private fun mayActOn(packet: Packet, now: Long): Boolean =
+        abs(now - packet.createdAtMillis) <= CALL_OUT_MAX_AGE_MS && acceptsCallOut()
 
     private suspend fun handleAck(packet: Packet, source: PeerInfo, now: Long) {
         val referencedId = packet.refMessageId ?: return
@@ -390,7 +411,7 @@ class MessageRepositoryImpl(
             val retained = dao.queuedPacket(referencedId)?.let {
                 runCatching { PacketCodec.decode(it.encodedPacket) }.getOrNull()
             }
-            val confirmable = retained?.type == PacketType.MESSAGE || retained?.type == PacketType.CALL_OUT
+            val confirmable = retained?.type?.isDirectText == true || retained?.type == PacketType.CALL_OUT
             if (confirmable && retained?.recipientId == packet.senderId) {
                 dao.deleteQueuedPacket(referencedId)
                 dao.pruneOrphanedPeerReceipts()

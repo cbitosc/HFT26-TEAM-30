@@ -1,6 +1,7 @@
 package com.slackers.emergencymesh.ui
 
 import com.slackers.emergencymesh.background.MeshSession
+import com.slackers.emergencymesh.background.TalkBackControl
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.MeshTransport
 import com.slackers.emergencymesh.core.ContactKeyWarning
@@ -16,6 +17,7 @@ data class AppServices(
     val transport: MeshTransport,
     val device: LocalDevice,
     val session: MeshSession,
+    val talkBack: TalkBackControl? = null,
     val repository: MessageRepository? = null,
     val security: MessageSecurity? = null,
     val engineLifecycle: EngineLifecycle? = null,

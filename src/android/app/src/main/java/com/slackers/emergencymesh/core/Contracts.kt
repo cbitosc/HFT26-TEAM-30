@@ -120,6 +120,9 @@ interface MessageSecurity {
     fun verify(sender: ContactCard, signedBytes: ByteArray, signature: ByteArray): Boolean
 }
 
+/** A rescuer's question for this phone to read aloud. */
+data class SpokenQuestion(val fromDeviceId: String, val text: String)
+
 /** Implemented by M3. The UI talks to this and never to the transport directly. */
 interface MessageRepository {
     val contacts: Flow<List<ContactCard>>
@@ -134,6 +137,9 @@ interface MessageRepository {
     /** A called phone confirmed that it is ringing. Holds that phone's device ID. */
     val answeredCallOuts: SharedFlow<String>
 
+    /** A verified contact asked this phone a question during its active SOS. */
+    val incomingQuestions: SharedFlow<SpokenQuestion>
+
     fun conversation(deviceId: String): Flow<List<ChatMessage>>
     suspend fun sendDirect(recipientDeviceId: String, text: String, priority: Priority): String
     suspend fun sendSos(body: MessageBody): String
@@ -141,4 +147,7 @@ interface MessageRepository {
 
     /** Asks a phone to ring. It stays silent unless its own SOS is still active. */
     suspend fun sendCallOut(targetDeviceId: String)
+
+    /** Sends a question for a phone to read aloud. It also appears as a normal chat message. */
+    suspend fun sendQuestion(targetDeviceId: String, text: String): String
 }

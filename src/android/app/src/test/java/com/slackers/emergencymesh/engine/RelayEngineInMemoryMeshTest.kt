@@ -11,6 +11,7 @@ import com.slackers.emergencymesh.core.PacketCodec
 import com.slackers.emergencymesh.core.PacketType
 import com.slackers.emergencymesh.core.Priority
 import com.slackers.emergencymesh.core.SendResult
+import com.slackers.emergencymesh.core.SpokenQuestion
 import com.slackers.emergencymesh.data.ContactEntity
 import com.slackers.emergencymesh.data.EmergencyMeshDao
 import com.slackers.emergencymesh.data.MessageEntity
@@ -312,17 +313,19 @@ class RelayEngineInMemoryMeshTest {
         private val transportC = mesh.phone("C")
         val daoA = InMemoryEmergencyMeshDao()
         val daoB = InMemoryEmergencyMeshDao()
+        val daoC = InMemoryEmergencyMeshDao()
+        val securityB = TestMessageSecurity(contact("B"))
         val repoA = MessageRepositoryImpl(daoA, transportA, TestMessageSecurity(contact("A")), scope)
-        val repoB = MessageRepositoryImpl(
-            daoB, transportB, TestMessageSecurity(contact("B")), scope, acceptsCallOut = { true },
-        )
+        val repoB = MessageRepositoryImpl(daoB, transportB, securityB, scope, acceptsCallOut = { true })
         val repoC = MessageRepositoryImpl(
-            InMemoryEmergencyMeshDao(), transportC, TestMessageSecurity(contact("C")), scope,
+            daoC, transportC, TestMessageSecurity(contact("C")), scope,
             nowMillis = cClock, acceptsCallOut = { cAcceptsCalls },
         )
         val ringsAtB = mutableListOf<String>()
         val ringsAtC = mutableListOf<String>()
         val confirmedAtA = mutableListOf<String>()
+        val questionsAtC = mutableListOf<SpokenQuestion>()
+        val questionsAtB = mutableListOf<SpokenQuestion>()
         private val trustedA = contact("A").copy(verified = cTrustsA)
 
         suspend fun start(scope: TestScope) {
@@ -332,6 +335,8 @@ class RelayEngineInMemoryMeshTest {
             scope.backgroundScope.launch(listening) { repoB.incomingCallOuts.toList(ringsAtB) }
             scope.backgroundScope.launch(listening) { repoC.incomingCallOuts.toList(ringsAtC) }
             scope.backgroundScope.launch(listening) { repoA.answeredCallOuts.toList(confirmedAtA) }
+            scope.backgroundScope.launch(listening) { repoB.incomingQuestions.toList(questionsAtB) }
+            scope.backgroundScope.launch(listening) { repoC.incomingQuestions.toList(questionsAtC) }
             listOf(repoA, repoB, repoC).forEach { it.startAndAwaitReady() }
             repoA.saveContact(contact("B"))
             repoA.saveContact(contact("C"))
@@ -344,6 +349,114 @@ class RelayEngineInMemoryMeshTest {
         fun stop() = listOf(repoA, repoB, repoC).forEach { it.stop() }
 
         fun callPacket() = mesh.sentLog.first { it.packet.type == PacketType.CALL_OUT }.packet
+    }
+
+    @Test
+    fun aQuestionCrossesARelayThatCanNotReadIt() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            val id = line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+
+            assertEquals(listOf(SpokenQuestion("A", "Are you hurt?")), line.questionsAtC)
+            assertTrue("Only the addressed phone speaks", line.questionsAtB.isEmpty())
+            assertEquals(0, line.securityB.directDecryptCount)
+            assertNull("The relay keeps no readable copy", line.daoB.message(id))
+            assertEquals(MessageStatus.DELIVERED.name, line.daoA.message(id)?.status)
+            assertEquals(1, line.mesh.sentLog.last { it.packet.id == id }.packet.hopCount)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aQuestionAppearsAsAnOrdinaryChatMessage() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            val id = line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            assertEquals(PacketType.MESSAGE.name, line.daoA.message(id)?.type)
+            assertEquals(PacketType.MESSAGE.name, line.daoC.message(id)?.type)
+            assertEquals("Are you hurt?", PacketCodec.decodeBody(line.daoC.message(id)!!.body).text)
+            assertNull("The sender stops retrying once it arrives", line.daoA.queuedPacket(id))
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun theSpokenAnswerComesBackAsAnEncryptedChatMessage() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            val answer = line.repoC.sendDirect("A", "Spoken answer: my leg is stuck", Priority.P0_SOS)
+            runCurrent()
+            assertEquals("Spoken answer: my leg is stuck", PacketCodec.decodeBody(line.daoA.message(answer)!!.body).text)
+            assertEquals(0, line.securityB.directDecryptCount)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aPhoneWithoutAnActiveSosKeepsTheMessageButNeverSpeaksIt() = runTest {
+        val line = CallOutLine(this, cAcceptsCalls = false)
+        try {
+            line.start(this)
+            val id = line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            assertTrue(line.questionsAtC.isEmpty())
+            assertNotNull("It still arrives as a message", line.daoC.message(id))
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aLateQuestionIsNeverSpoken() = runTest {
+        val line = CallOutLine(this, cClock = { System.currentTimeMillis() + 6 * 60 * 1_000 })
+        try {
+            line.start(this)
+            line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            assertTrue(line.questionsAtC.isEmpty())
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun aRepeatedQuestionIsSpokenOnce() = runTest {
+        val line = CallOutLine(this)
+        try {
+            line.start(this)
+            val id = line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            val relayed = line.mesh.sentLog.last { it.packet.id == id }
+            val transportB = line.mesh.phone("B")
+            transportB.send(transportB.peers.value.first { it.deviceId == "C" }.endpointId, relayed.packet)
+            runCurrent()
+            assertEquals(1, line.questionsAtC.size)
+        } finally {
+            line.stop()
+        }
+    }
+
+    @Test
+    fun onlyAVerifiedContactCanAskAQuestion() = runTest {
+        val line = CallOutLine(this, cTrustsA = false)
+        try {
+            line.start(this)
+            line.repoA.sendQuestion("C", "Are you hurt?")
+            runCurrent()
+            assertTrue(line.questionsAtC.isEmpty())
+        } finally {
+            line.stop()
+        }
     }
 
     @Test

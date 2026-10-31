@@ -1,5 +1,6 @@
 package com.slackers.emergencymesh.background
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,6 +10,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -17,9 +19,11 @@ import androidx.core.content.ContextCompat
 import com.slackers.emergencymesh.MainActivity
 import com.slackers.emergencymesh.core.DiscoveryMode
 import com.slackers.emergencymesh.core.PeerState
+import com.slackers.emergencymesh.core.Priority
 import com.slackers.emergencymesh.transport.LocalDevice
 import com.slackers.emergencymesh.ui.AppServices
 import com.slackers.emergencymesh.ui.SosScanSessionStore
+import com.slackers.emergencymesh.ui.hasPermission
 import com.slackers.emergencymesh.ui.missingNearbyPermissions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -68,7 +72,7 @@ class MeshForegroundService : Service() {
             if (!session.running.value) stopSelfResult(startId)
             return START_STICKY
         }
-        if (!enterForeground()) {
+        if (!enterForeground(restarted = intent == null)) {
             session.keepAliveChanged(false)
             stopSelfResult(startId)
             return START_NOT_STICKY
@@ -88,13 +92,26 @@ class MeshForegroundService : Service() {
         super.onDestroy()
     }
 
+    /** The radio must keep running even if Android refuses the microphone part of this. */
+    private fun enterForeground(restarted: Boolean): Boolean {
+        val radio = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        return (mayUseMicrophone(restarted) && startAs(radio or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)) ||
+            startAs(radio)
+    }
+
+    /** Android only grants the microphone from the screen, so a restart can't ask for it. */
+    private fun mayUseMicrophone(restarted: Boolean): Boolean =
+        !restarted && Build.VERSION.SDK_INT >= 30 &&
+            MeshRuntime.get(this).talkBack?.allowed?.value == true &&
+            hasPermission(this, Manifest.permission.RECORD_AUDIO)
+
     /** Android can refuse a restart from the background, unless battery optimization is off. */
-    private fun enterForeground(): Boolean = try {
+    private fun startAs(types: Int): Boolean = try {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
             notification(meshStatusText(connected = 0, waiting = 0, problem = null)),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            types,
         )
         true
     } catch (refused: RuntimeException) {
@@ -140,6 +157,7 @@ class MeshForegroundService : Service() {
         following = scope.launch {
             launch { alertNewMessages(services) }
             launch { ringWhenCalled(services) }
+            launch { answerQuestions(services) }
             combine(session.running, services.transport.peers, session.problem) { running, peers, problem ->
                 if (running) meshStatusText(
                     connected = peers.count { it.state == PeerState.CONNECTED },
@@ -182,6 +200,22 @@ class MeshForegroundService : Service() {
             ringer.ring()
             val contacts = repository.contacts.catch { emit(emptyList()) }.first()
             alerts.showCallOut(contacts.firstOrNull { it.deviceId == callerId }?.displayName, stop)
+        }
+    }
+
+    private suspend fun answerQuestions(services: AppServices) {
+        val repository = services.repository ?: return
+        val control = services.talkBack ?: return
+        val talkBack = TalkBack(
+            voice = DeviceVoice(this),
+            mayListen = {
+                control.allowed.value && hasPermission(this, Manifest.permission.RECORD_AUDIO)
+            },
+            reply = { rescuer, text -> repository.sendDirect(rescuer, text, Priority.P0_SOS) },
+        )
+        repository.incomingQuestions.collect { question ->
+            // A speech failure here must not take the relay down.
+            runCatching { talkBack.ask(question) }
         }
     }
 

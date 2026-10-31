@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.slackers.emergencymesh.background.MeshForegroundService
 import com.slackers.emergencymesh.core.ChatMessage
 import com.slackers.emergencymesh.core.ContactCard
 import com.slackers.emergencymesh.core.ContactKeyWarning
@@ -101,6 +102,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var sendingSos by remember { mutableStateOf(false) }
     var callingOut by remember { mutableStateOf(false) }
     var callOutStatus by remember { mutableStateOf<String?>(null) }
+    var questionFor by remember { mutableStateOf<String?>(null) }
+    var questionError by remember { mutableStateOf<String?>(null) }
     var directSubmission by remember { mutableStateOf(0) }
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
@@ -198,6 +201,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val peers by peersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val radioLogFlow = remember(services) { services?.radioLog ?: flowOf(emptyList<TransportLogEntry>()) }
     val radioEntries by radioLogFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val talkBackFlow = remember(services) { services?.talkBack?.allowed ?: MutableStateFlow(false) }
+    val talkBackAllowed by talkBackFlow.collectAsStateWithLifecycle()
     val connected = peers.count { it.state == PeerState.CONNECTED }
 
     fun nameOf(deviceId: String): String =
@@ -388,6 +393,19 @@ fun EmergencyMeshApp(services: AppServices? = null) {
             if (result.values.any { it }) "Location access updated. A recent fix will be used if available."
             else "Location denied. You can still send SOS without coordinates."
         )
+    }
+
+    fun allowTalkBack() {
+        services?.talkBack?.setAllowed(true)
+        // A running service has to re-enter the foreground to pick up the microphone.
+        if (discoveryRequested) MeshForegroundService.start(context)
+    }
+
+    val microphoneRequest = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) allowTalkBack()
+        else notifyUser("Microphone denied. Questions are still read aloud, but this phone can't listen.")
     }
 
     BackHandler(enabled = conversationId != null) { conversationId = null }
@@ -628,6 +646,15 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                     callOutStatus = callOutStatus,
                     onCallOut = { target -> callOut(listOf(target)) },
                     onCallOutAll = { callOut(callOutTargets(alerts, System.currentTimeMillis())) },
+                    talkBackAllowed = talkBackAllowed,
+                    onTalkBackAllowed = { allow ->
+                        when {
+                            !allow -> services?.talkBack?.setAllowed(false)
+                            hasPermission(context, Manifest.permission.RECORD_AUDIO) -> allowTalkBack()
+                            else -> microphoneRequest.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onAskQuestion = { target -> questionError = null; questionFor = target },
                 )
                 AppTab.DEBUG -> DebugScreen(
                     logs = log.toList(),
@@ -751,6 +778,30 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         },
         onDismiss = { groupCodeOpen = false },
     )
+
+    questionFor?.let { target ->
+        AskQuestionDialog(
+            name = nameOf(target),
+            error = questionError,
+            onSend = { question ->
+                val repository = services?.repository
+                if (repository != null) scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { repository.sendQuestion(target, question) }
+                        record("Question sent to $target. Its text is not logged.")
+                        questionFor = null
+                        // The answer arrives in this chat, right under the question.
+                        conversationId = target
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (problem: Exception) {
+                        questionError = problem.message ?: "The question couldn't be sent."
+                    }
+                }
+            },
+            onDismiss = { questionFor = null },
+        )
+    }
 
     if (topologyOpen && debugTools && services != null) DebugTopologyDialog(
         allowed = debugAllowlist,

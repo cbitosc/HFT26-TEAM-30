@@ -64,6 +64,7 @@ internal object MeshRuntime {
                 startKeepAlive = { MeshForegroundService.start(context) },
                 scope = scope,
             ),
+            talkBack = repository?.let { TalkBackControl(context) },
             security = security,
             repository = repository,
             engineLifecycle = engineLifecycle,

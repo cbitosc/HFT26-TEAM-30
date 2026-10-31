@@ -29,6 +29,20 @@
     <!-- Rescue Call-Out shakes the phone as well as ringing it -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Talk-Back listens once after asking aloud, only if the owner opted in -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Android hides these system services from apps unless they are declared -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <!-- Nearby up to Android 12, and optional SOS location on every version -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -49,6 +63,6 @@
         <service
             android:name=".background.MeshForegroundService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|microphone" />
     </application>
 </manifest>

@@ -15,10 +15,15 @@ const val MAX_TEXT_CHARS = 2_000
 const val MAX_TTL = 10
 
 enum class PacketType {
-    MESSAGE, SOS, ACK_SENT, ACK_RELAYED, ACK_DELIVERED, SOS_CANCEL, SAFE, CONTACT_CARD, CALL_OUT;
+    MESSAGE, SOS, ACK_SENT, ACK_RELAYED, ACK_DELIVERED, SOS_CANCEL, SAFE, CONTACT_CARD, CALL_OUT,
+    TALK_BACK;
 
     val isAck: Boolean
         get() = this == ACK_SENT || this == ACK_RELAYED || this == ACK_DELIVERED
+
+    /** Text for one person, which is end-to-end encrypted and confirmed by its recipient. */
+    val isDirectText: Boolean
+        get() = this == MESSAGE || this == TALK_BACK
 }
 
 /** Declared most urgent first, so sorting by ordinal gives queue order. */

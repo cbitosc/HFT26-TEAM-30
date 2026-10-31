@@ -110,6 +110,15 @@ See `docs/KEEP_ALIVE_TEST.md` for the phone test.
 
 See `docs/CALL_OUT_TEST.md` for the phone test.
 
+## Talk-Back
+
+- `sendQuestion` sends a `TALK_BACK` packet. It's end-to-end encrypted like `MESSAGE`, and it appears as a chat message on both phones.
+- The addressed phone reads it aloud only during its own SOS, and only if the question is under 5 minutes old.
+- It only listens if its owner ticked the box on the SOS tab. The answer comes back through `sendDirect`.
+- Every phone in the mesh needs this build, because an older build can't decode the new packet type.
+
+See `docs/TALK_BACK_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.
