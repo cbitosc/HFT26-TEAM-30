@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <!-- Demo dashboards on a hotspot use plain HTTP. Release builds need HTTPS. -->
+    <application android:usesCleartextTraffic="true">
         <activity
             android:name=".debug.MeshTestActivity"
             android:exported="true"

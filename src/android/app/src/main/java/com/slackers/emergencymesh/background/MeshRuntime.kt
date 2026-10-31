@@ -54,6 +54,7 @@ internal object MeshRuntime {
                 startKeepAlive = { MeshForegroundService.start(context) },
                 scope = scope,
             ),
+            dashboard = repository?.let { DashboardConnection.start(context, it, scope) },
             security = security,
             repository = repository,
             engineLifecycle = engineLifecycle,

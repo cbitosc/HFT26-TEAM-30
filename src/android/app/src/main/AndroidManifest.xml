@@ -19,6 +19,9 @@
         android:minSdkVersion="33"
         android:usesPermissionFlags="neverForLocation" />
 
+    <!-- Only used for the optional dashboard upload. The mesh itself never needs it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Keeps the mesh running with the screen off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />

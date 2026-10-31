@@ -112,6 +112,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var hasGroupKey by remember(services) { mutableStateOf(services?.security?.hasGroupKey == true) }
     val debugTools = remember(context) { isDebugBuild(context) }
     var topologyOpen by remember { mutableStateOf(false) }
+    var dashboardOpen by remember { mutableStateOf(false) }
+    var dashboardError by remember { mutableStateOf<String?>(null) }
     var topologyError by remember { mutableStateOf<String?>(null) }
     var debugAllowlist by remember(services) { mutableStateOf(services?.readDebugAllowlist?.invoke()) }
     var permissionFeedback by remember { mutableStateOf<String?>(null) }
@@ -196,6 +198,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val peers by peersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val radioLogFlow = remember(services) { services?.radioLog ?: flowOf(emptyList<TransportLogEntry>()) }
     val radioEntries by radioLogFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val dashboardStatusFlow = remember(services) { services?.dashboard?.status ?: MutableStateFlow(null) }
+    val dashboardStatus by dashboardStatusFlow.collectAsStateWithLifecycle()
     val connected = peers.count { it.state == PeerState.CONNECTED }
     val securityLabel = when {
         services == null -> "Services not connected"
@@ -589,6 +593,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                         else -> "${debugAllowlist?.size} stable device IDs allowed"
                     },
                     onTopology = { topologyError = null; topologyOpen = true },
+                    dashboardStatus = dashboardStatus,
+                    onDashboard = { dashboardError = null; dashboardOpen = true },
                     onClear = { log.clear() },
                     onCopy = {
                         val radioText = radioEntries.joinToString("\n") { "${it.timeMillis}  ${it.message}" }
@@ -696,6 +702,27 @@ fun EmergencyMeshApp(services: AppServices? = null) {
         },
         onDismiss = { groupCodeOpen = false },
     )
+
+    services?.dashboard?.takeIf { dashboardOpen }?.let { dashboard ->
+        DashboardLinkDialog(
+            current = dashboard.link.value,
+            error = dashboardError,
+            onSave = { url, token, includeStoredAlerts ->
+                if (dashboard.save(url, token, includeStoredAlerts, System.currentTimeMillis())) {
+                    record("Dashboard upload turned on. The token is not logged.")
+                    dashboardOpen = false
+                } else {
+                    dashboardError = "Enter the full address, starting with http:// or https://."
+                }
+            },
+            onTurnOff = {
+                dashboard.turnOff()
+                record("Dashboard upload turned off.")
+                dashboardOpen = false
+            },
+            onDismiss = { dashboardOpen = false },
+        )
+    }
 
     if (topologyOpen && debugTools && services != null) DebugTopologyDialog(
         allowed = debugAllowlist,

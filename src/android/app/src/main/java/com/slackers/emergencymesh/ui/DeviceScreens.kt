@@ -195,6 +195,8 @@ internal fun DebugScreen(
     showTopologyTools: Boolean,
     allowlistSummary: String,
     onTopology: () -> Unit,
+    dashboardStatus: String?,
+    onDashboard: () -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -206,6 +208,13 @@ internal fun DebugScreen(
             Text("DEBUG TOPOLOGY", style = MaterialTheme.typography.labelLarge)
             Text(allowlistSummary, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onTopology) { Text("Configure allowed devices") }
+        }
+        dashboardStatus?.let { status ->
+            item {
+                Text("DASHBOARD UPLOAD", style = MaterialTheme.typography.labelLarge)
+                Text(status, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = onDashboard) { Text("Set up dashboard upload") }
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
