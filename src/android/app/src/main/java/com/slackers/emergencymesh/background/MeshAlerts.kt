@@ -74,6 +74,23 @@ internal class MeshAlerts(private val context: Context) {
         notifications.notify(message.messageId, ALERT_ID, builder.build())
     }
 
+    fun showCallOut(callerName: String?, stopRinging: PendingIntent) {
+        val caller = callerName?.takeIf { it.isNotBlank() } ?: "A nearby phone"
+        notifications.notify(
+            CALL_OUT_TAG,
+            ALERT_ID,
+            NotificationCompat.Builder(context, SOS_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentTitle("A rescuer is calling this phone")
+                .setContentText("$caller is trying to find you. Make noise if you can.")
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setTimeoutAfter(Ringer.RING_MILLIS)
+                .addAction(0, "Stop ringing", stopRinging)
+                .build(),
+        )
+    }
+
     private fun appOnScreen(): Boolean {
         val state = ActivityManager.RunningAppProcessInfo()
         ActivityManager.getMyMemoryState(state)
@@ -83,6 +100,7 @@ internal class MeshAlerts(private val context: Context) {
     private companion object {
         const val SOS_CHANNEL = "sos_alerts"
         const val MESSAGE_CHANNEL = "messages"
+        const val CALL_OUT_TAG = "call_out"
         const val ALERT_ID = 2
     }
 }

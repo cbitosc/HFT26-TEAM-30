@@ -109,6 +109,15 @@ See `docs/KEEP_ALIVE_TEST.md` for the phone test.
 
 See `docs/DASHBOARD_UPLOAD_TEST.md` for the phone test.
 
+## Rescue Call-Out
+
+- `sendCallOut` sends a `CALL_OUT` packet to one phone, and relays forward it like any other addressed packet.
+- A called phone only rings if its own SOS is active. It then sends `ACK_DELIVERED`, which means "ringing" for this packet type.
+- A call has a 2-minute retention instead of the usual 24 hours for P0, and a phone ignores any call over 5 minutes old.
+- Every phone in the mesh needs this build, because an older build can't decode the new packet type.
+
+See `docs/CALL_OUT_TEST.md` for the phone test.
+
 ## Contact exchange
 
 `ContactCardService` swaps contact cards automatically when two phones connect, so the engine doesn't have to. Phones must connect directly once, so enroll all phones before forcing the A-B-C topology.

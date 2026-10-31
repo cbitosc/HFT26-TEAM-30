@@ -28,12 +28,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import kotlin.math.abs
 
 /** Room-backed repository and store-carry-forward engine for M3. */
 class MessageRepositoryImpl(
@@ -42,12 +46,18 @@ class MessageRepositoryImpl(
     private val security: MessageSecurity,
     private val scope: CoroutineScope,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val acceptsCallOut: () -> Boolean = { false },
 ) : MessageRepository, MessageStatusTimeline {
     private val localCard = security.localContactCard()
     private var eventJob: Job? = null
     private var engineJob: Job? = null
     private var engineScope = scope
     private val peerLocks = mutableMapOf<String, Mutex>()
+    private val _incomingCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _answeredCallOuts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    override val incomingCallOuts: SharedFlow<String> = _incomingCallOuts.asSharedFlow()
+    override val answeredCallOuts: SharedFlow<String> = _answeredCallOuts.asSharedFlow()
 
     override val contacts: Flow<List<ContactCard>> = dao.observeContacts().map { rows -> rows.map(::toCard) }
 
@@ -185,6 +195,31 @@ class MessageRepositoryImpl(
         return id
     }
 
+    /**
+     * A ring only makes sense while someone is listening, so unlike every other packet a call
+     * expires after minutes. Otherwise a relay could set a phone off hours later.
+     */
+    override suspend fun sendCallOut(targetDeviceId: String) {
+        val recipient = dao.contact(targetDeviceId)?.let(::toCard)
+            ?: throw IllegalArgumentException("Enroll this phone before calling it")
+        require(recipient.verified) { "Verify this phone before calling it" }
+        val created = nowMillis()
+        val packet = seal(
+            type = PacketType.CALL_OUT,
+            id = UUID.randomUUID().toString(),
+            recipientId = recipient.deviceId,
+            refMessageId = null,
+            priority = Priority.P0_SOS,
+            createdAtMillis = created,
+            body = MessageBody(""),
+            broadcast = false,
+            recipient = recipient,
+            retentionSeconds = CALL_OUT_RETENTION_SECONDS,
+        )
+        dao.putQueuedPacket(packet.toQueue(null, created, created, outgoing = true))
+        dispatchConnectedPeers()
+    }
+
     override suspend fun saveContact(card: ContactCard) {
         dao.putContact(
             ContactEntity(
@@ -292,8 +327,11 @@ class MessageRepositoryImpl(
             return
         }
 
+        var ringing = false
         if (!duplicate) {
-            if (isForThisDevice(packet)) {
+            if (packet.type == PacketType.CALL_OUT) {
+                ringing = isForThisDevice(packet) && receiveCallOut(packet, now)
+            } else if (isForThisDevice(packet)) {
                 val plain = try {
                     val aad = PacketCodec.associatedData(packet)
                     if (packet.type == PacketType.SOS) {
@@ -328,10 +366,18 @@ class MessageRepositoryImpl(
 
         // Repeat ACKs for valid duplicates so a lost receipt can recover; never ACK an ACK.
         enqueueAck(PacketType.ACK_SENT, packet, now)
-        if (isForThisDevice(packet) && packet.type == PacketType.MESSAGE) {
+        if (isForThisDevice(packet) && (packet.type == PacketType.MESSAGE || ringing)) {
             enqueueAck(PacketType.ACK_DELIVERED, packet, now)
         }
         dao.pruneOrphanedPeerReceipts()
+    }
+
+    /** The signature already proved who called. The clock check stops a late or replayed ring. */
+    private fun receiveCallOut(packet: Packet, now: Long): Boolean {
+        val fresh = abs(now - packet.createdAtMillis) <= CALL_OUT_MAX_AGE_MS
+        val accepted = fresh && acceptsCallOut()
+        if (accepted) _incomingCallOuts.tryEmit(packet.senderId)
+        return accepted
     }
 
     private suspend fun handleAck(packet: Packet, source: PeerInfo, now: Long) {
@@ -344,9 +390,13 @@ class MessageRepositoryImpl(
             val retained = dao.queuedPacket(referencedId)?.let {
                 runCatching { PacketCodec.decode(it.encodedPacket) }.getOrNull()
             }
-            if (retained?.type == PacketType.MESSAGE && retained.recipientId == packet.senderId) {
+            val confirmable = retained?.type == PacketType.MESSAGE || retained?.type == PacketType.CALL_OUT
+            if (confirmable && retained?.recipientId == packet.senderId) {
                 dao.deleteQueuedPacket(referencedId)
                 dao.pruneOrphanedPeerReceipts()
+                if (retained.type == PacketType.CALL_OUT && packet.recipientId == localCard.deviceId) {
+                    _answeredCallOuts.tryEmit(packet.senderId)
+                }
             }
         }
 
@@ -424,6 +474,7 @@ class MessageRepositoryImpl(
         body: MessageBody,
         broadcast: Boolean,
         recipient: ContactCard?,
+        retentionSeconds: Int = priority.retentionSeconds,
     ): Packet {
         val header = Packet(
             type = type,
@@ -434,7 +485,7 @@ class MessageRepositoryImpl(
             priority = priority,
             createdAtMillis = createdAtMillis,
             initialTtl = priority.defaultTtl,
-            retentionSeconds = priority.retentionSeconds,
+            retentionSeconds = retentionSeconds,
             ttl = priority.defaultTtl,
             hopCount = 0,
             encryptedBody = byteArrayOf(),
@@ -514,6 +565,8 @@ class MessageRepositoryImpl(
 
     private companion object {
         const val ALERT_WINDOW = 20
+        const val CALL_OUT_RETENTION_SECONDS = 120
+        const val CALL_OUT_MAX_AGE_MS = 5 * 60 * 1_000L
         const val DISPATCH_BATCH_SIZE = 32
         const val MAX_ACK_ATTEMPTS = 3
         const val INITIAL_RETRY_MS = 1_000L

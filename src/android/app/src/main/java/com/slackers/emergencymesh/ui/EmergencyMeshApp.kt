@@ -99,6 +99,8 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     var connectionStartJob by remember { mutableStateOf<Job?>(null) }
     var sendingDirect by remember { mutableStateOf(false) }
     var sendingSos by remember { mutableStateOf(false) }
+    var callingOut by remember { mutableStateOf(false) }
+    var callOutStatus by remember { mutableStateOf<String?>(null) }
     var directSubmission by remember { mutableStateOf(0) }
     var submittedConversationId by remember { mutableStateOf<String?>(null) }
     var inspectedContact by remember { mutableStateOf<ContactCard?>(null) }
@@ -201,6 +203,47 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     val dashboardStatusFlow = remember(services) { services?.dashboard?.status ?: MutableStateFlow(null) }
     val dashboardStatus by dashboardStatusFlow.collectAsStateWithLifecycle()
     val connected = peers.count { it.state == PeerState.CONNECTED }
+
+    fun nameOf(deviceId: String): String =
+        contacts.firstOrNull { it.deviceId == deviceId }?.displayName?.takeIf { it.isNotBlank() }
+            ?: "Phone ${deviceId.take(4)}"
+
+    fun callOut(targets: List<String>) {
+        val repository = services?.repository
+        if (repository == null || callingOut) return
+        if (targets.isEmpty()) {
+            callOutStatus = "No SOS from the last 24 hours to call."
+            return
+        }
+        callingOut = true
+        scope.launch {
+            try {
+                callOutInTurn(
+                    targets = targets,
+                    onTurn = { turn, target ->
+                        callOutStatus = if (targets.size == 1) "Calling ${nameOf(target)}…"
+                            else "Calling ${nameOf(target)}, $turn of ${targets.size}…"
+                    },
+                    send = { target ->
+                        // One phone that can't be called must not stop the rest of the list.
+                        try {
+                            withContext(Dispatchers.IO) { repository.sendCallOut(target) }
+                        } catch (problem: IllegalArgumentException) {
+                            record("Call-Out skipped for $target: ${problem.message}")
+                        }
+                    },
+                )
+                callOutStatus = "Call sent. You'll see a message here if a phone starts ringing."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                record("Call-Out failed: ${error.message}")
+                callOutStatus = "The call couldn't be sent. Check Debug."
+            } finally {
+                callingOut = false
+            }
+        }
+    }
     val securityLabel = when {
         services == null -> "Services not connected"
         services.initializationError != null -> "Secure identity unavailable"
@@ -238,6 +281,13 @@ fun EmergencyMeshApp(services: AppServices? = null) {
     // The notification can stop the mesh without going through this screen.
     LaunchedEffect(services, discoveryRequested) {
         services?.readDiscoveryMode?.invoke()?.let { discoveryMode = it }
+    }
+
+    LaunchedEffect(services) {
+        services?.repository?.answeredCallOuts?.collect { deviceId ->
+            record("Call-Out confirmed by $deviceId")
+            notifyUser("${nameOf(deviceId)} is ringing. Listen for it.")
+        }
     }
 
     LaunchedEffect(services) {
@@ -577,6 +627,11 @@ fun EmergencyMeshApp(services: AppServices? = null) {
                             }
                         }
                     },
+                    canCallOut = canMessage && discoveryRequested,
+                    callingOut = callingOut,
+                    callOutStatus = callOutStatus,
+                    onCallOut = { target -> callOut(listOf(target)) },
+                    onCallOutAll = { callOut(callOutTargets(alerts, System.currentTimeMillis())) },
                 )
                 AppTab.DEBUG -> DebugScreen(
                     logs = log.toList(),

@@ -29,6 +29,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Rescue Call-Out shakes the phone as well as ringing it -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Nearby up to Android 12, and optional SOS location on every version -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

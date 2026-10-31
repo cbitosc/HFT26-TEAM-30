@@ -11,6 +11,7 @@ import com.slackers.emergencymesh.transport.NearbyMeshTransport
 import com.slackers.emergencymesh.ui.AppServices
 import com.slackers.emergencymesh.ui.EngineLifecycle
 import com.slackers.emergencymesh.ui.MessageStatusTimes
+import com.slackers.emergencymesh.ui.SosScanSessionStore
 import com.slackers.emergencymesh.ui.StoredMessages
 import com.slackers.emergencymesh.ui.isDebugBuild
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +37,16 @@ internal object MeshRuntime {
         val dao = database.emergencyMeshDao()
         val securityResult = runCatching { SecurityProvider.create(context) }
         val security = securityResult.getOrNull()
-        val repository = security?.let { MessageRepositoryImpl(dao, transport, it, scope) }
+        val sosSession = SosScanSessionStore(context)
+        val repository = security?.let {
+            MessageRepositoryImpl(
+                dao = dao,
+                transport = transport,
+                security = it,
+                scope = scope,
+                acceptsCallOut = { sosSession.readUntil() > System.currentTimeMillis() },
+            )
+        }
         val contactCards = security?.let { ContactCardService(transport, it, RoomContactBook(dao)) }
         contactCards?.start(scope)
         val engineLifecycle = repository?.let { engine ->
