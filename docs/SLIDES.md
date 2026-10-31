@@ -1,6 +1,6 @@
 # EmergencyMesh: six-slide deck
 
-Use only results from a build tested on phones. The evidence below names the build used at the time; check later mentor changes before claiming them.
+Use results from the [mentor-changes phone test](evidence/mentor-fixes.md) and the earlier required-feature and extras runs. All code claims refer to the tested debug build.
 
 ## 1. Problem
 
@@ -22,6 +22,8 @@ The core three-phone run was offline: airplane mode on, Bluetooth on, Wi-Fi off.
 
 - Kotlin and Jetpack Compose app, Room queue, Nearby Connections radio, Tink and Android Keystore protection.
 - Direct messages, SOS alerts, delivery status timeline and queued recovery.
+- Three offline logins: User, Responder and Admin. Responders send signed area alerts; Admin sees SOS distance and direction without internet.
+- Direct messages try learned fewest-hop routes first, with an eight-second flood fallback.
 - Prototype extras: locked-screen relay on some brands, audible Call-Out, spoken Talk-Back, low-battery Last Breath and Bluetooth-name SOS intake.
 - Laptop relay and SOS dashboard were tested through a USB bridge. Dashboard AI was off without a live model key.
 
@@ -38,8 +40,11 @@ See [extras phone test](evidence/extras-phone-test.md) for precise scope.
 | Restart | Pending survived restart and delivered exactly once |
 | Status | Pending, Sent, Relayed and Delivered appeared in the timeline |
 | Extra run | Locked Samsung relayed in 2.7 seconds; vivo needed battery settings; OnePlus froze while locked |
+| Area alert | Outside B relayed without showing it; inside C showed it after one hop in 3.0 seconds |
+| Locked area alert | Samsung inside the area was alerted in 2.1 seconds |
+| Shortest path | In a triangle, B saw none of two direct messages. After the direct link was removed, the next went through B |
 
-Evidence: [final build](evidence/final-build.md), [required features](evidence/required-features.md), [extras phone test](evidence/extras-phone-test.md).
+Evidence: [mentor changes](evidence/mentor-fixes.md), [final build](evidence/final-build.md), [required features](evidence/required-features.md), [extras phone test](evidence/extras-phone-test.md).
 Screenshots: [vivo](evidence/three-phone-A-vivo.png), [Samsung](evidence/three-phone-B-samsung.png), [OnePlus](evidence/three-phone-C-oneplus.png).
 
 ## 5. Limits
@@ -50,13 +55,15 @@ Screenshots: [vivo](evidence/three-phone-A-vivo.png), [Samsung](evidence/three-p
 - Locked relay varied by brand. Samsung passed, vivo required background settings, OnePlus froze despite exemptions.
 - In the extras run, A used an internet hotspot and phones had USB power. Laptop and dashboard links used `adb reverse`.
 - Battery drain and physical range were not measured in these evidence files. AI accuracy and a real phone without the app were not tested.
+- Routing was tested on 3 real phones and 5 simulated phones, not 1,000. The first message to a new phone still spreads through all paths.
+- Area alerts used indoor debug test locations, not real GPS boundaries. An SOS carries a location only when the phone had a fix in the last 2 minutes.
 
 ## 6. What the mentors asked and what we changed
 
-### Routing, responder alerts and visibility
-
-- Three-phone tests established relay, delivery acknowledgements and queued recovery. The later routing branch targets fewer hops with an eight-second flood fallback. Mark this implemented only after merge and final phone recheck.
-- User, Responder and Admin roles, area alerts and admin location screen remain pending until Shrenik reports that the final APK passed.
-- A status timeline now retains the brief Relayed state after delivery.
-
-Before recording, replace pending statements only with mentor changes verified on the final APK.
+| Mentor question | What we did |
+| --- | --- |
+| 1,000 phones: how do you pick the shortest path? | Direct messages learn the fewest-hop route from verified traffic and try it first. Other paths open after 8 seconds if needed. Routes expire after 5 minutes and drop when a phone leaves. SOS and area alerts still flood. We tested 3 real and 5 simulated phones, not 1,000. |
+| Three logins? | User, Responder and Admin work offline. The app holds only public role keys. |
+| Everyone uses hopping. How are you different? | Call-Out, Talk-Back, Last Breath and no-app SOS intake help people who cannot use the app directly. A laptop node can carry packets. The no-app test used a phone with the app installed. |
+| How does the admin know where someone is? | Each SOS with a recent fix shows its distance and direction from the admin's phone without maps or internet. |
+| Can responders warn one area without a network? | Every phone relays a signed area alert; only phones inside show it when location is known. The phone test used debug locations. |
